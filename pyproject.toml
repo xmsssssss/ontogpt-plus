@@ -39,6 +39,17 @@ dependencies = [
     "rdflib>=6.3.0",
 ]
 
+[project.optional-dependencies]
+web = [
+    "Jinja2>=3.1.2",
+    "fastapi>=0.115.0",
+    "python-multipart>=0.0.7",
+    "uvicorn>=0.20.0",
+    "python-docx>=1.0.0",
+    "openpyxl>=3.1.0",
+    "neo4j>=5.0.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/xmsssssss/ontogpt-plus"
 Repository = "https://github.com/xmsssssss/ontogpt-plus"
@@ -58,15 +69,6 @@ dev = [
     "jupyter<2.0.0,>=1.0.0",
     "seaborn<1.0.0,>=0.12.2",
     "papermill<3.0.0,>=2.4.0",
-]
-web = [
-    "Jinja2>=3.1.2",
-    "fastapi>=0.115.0",
-    "python-multipart>=0.0.7",
-    "uvicorn>=0.20.0",
-    "python-docx>=1.0.0",
-    "openpyxl>=3.1.0",
-    "neo4j>=5.0.0",
 ]
 docs = [
     "myst-parser>=0.18.1",

@@ -56,6 +56,12 @@ pip install -e ".[web]"
 pip install -e .
 ```
 
+镜像源连接不稳定时，临时切到官方源再同步（PowerShell 用 `$env:UV_DEFAULT_INDEX="https://pypi.org/simple"`）：
+
+```bash
+UV_DEFAULT_INDEX=https://pypi.org/simple uv sync --extra web
+```
+
 ## 快速开始
 
 ### 命令行
