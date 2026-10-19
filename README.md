@@ -85,12 +85,14 @@ ontogpt extract -i example.txt -t drug
 ### Web Studio
 
 ```bash
-web-ontogpt
-# 或
-uv run web-ontogpt
+web-ontogpt                    # 默认 127.0.0.1:8000
+web-ontogpt --port 8001        # 端口被占用时换一个
+web-ontogpt --no-reload        # 关闭自动重载
+uv run web-ontogpt --port 8001
 ```
 
-浏览器打开 <http://127.0.0.1:8000>。服务默认只监听回环地址，且**没有身份认证**，
+浏览器打开 <http://127.0.0.1:8000>（换端口时对应调整）。也可以用
+`ONTOGPT_WEB_HOST`、`ONTOGPT_WEB_PORT` 环境变量设置默认值。服务默认只监听回环地址，且**没有身份认证**，
 不要直接暴露到公网。
 
 ## Web Studio 页面与接口

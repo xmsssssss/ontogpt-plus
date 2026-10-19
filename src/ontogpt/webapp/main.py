@@ -1168,12 +1168,43 @@ async def form_post(
 
 
 def start():
-    """Launch with `uv run web-ontogpt` or `web-ontogpt`."""
+    """Launch with `web-ontogpt`, optionally `--host`, `--port` or `--no-reload`."""
+    import argparse
+    import socket
+
+    parser = argparse.ArgumentParser(
+        prog="web-ontogpt", description="Run the OntoGPT Web Studio."
+    )
+    parser.add_argument(
+        "--host",
+        default=os.getenv("ONTOGPT_WEB_HOST", "127.0.0.1"),
+        help="Bind address (default: 127.0.0.1, or ONTOGPT_WEB_HOST).",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("ONTOGPT_WEB_PORT", "8000")),
+        help="Listen port (default: 8000, or ONTOGPT_WEB_PORT).",
+    )
+    parser.add_argument(
+        "--no-reload", action="store_true", help="Disable the auto-reloader."
+    )
+    args = parser.parse_args()
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind((args.host, args.port))
+        except OSError:
+            raise SystemExit(
+                f"端口 {args.port} 已被占用或不可绑定，换一个："
+                f"web-ontogpt --port {args.port + 1}"
+            )
+
     uvicorn.run(
         "ontogpt.webapp.main:app",
-        host="127.0.0.1",
-        port=8000,
-        reload=True,
+        host=args.host,
+        port=args.port,
+        reload=not args.no_reload,
         reload_dirs=["src"],
         reload_excludes=[".venv", ".git", "__pycache__", "task_history.db", "*.db", "*.log"],
     )
