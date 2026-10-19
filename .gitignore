@@ -154,3 +154,12 @@ LOG
 
 # label cache written by the term validation unit tests
 tests/output/term-validator-cache/
+
+# Web Studio runtime state
+task_history.db
+task_history.db-journal
+.litellm_cache/
+/*.owl
+
+# Local editor / agent configuration
+.claude/

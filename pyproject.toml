@@ -1,7 +1,7 @@
 [project]
 name = "ontogpt"
 version = "1.2.0"
-description = "OntoGPT is a Python package for extracting structured information from text with large language models (LLMs), instruction prompts, and ontology-based grounding."
+description = "OntoGPT Plus: ontology-grounded LLM information extraction with a task-driven web studio, OWL 2 export, and Neo4j sync."
 readme = "README.md"
 authors = [
     {name = "Chris Mungall", email = "cjmungall@lbl.gov"},
@@ -36,7 +36,14 @@ dependencies = [
     "scipy<2.0.0,>=1.14.1",
     "numpy>=2.0.0",
     "linkml-term-validator>=0.4.5",
+    "rdflib>=6.3.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/xmsssssss/ontogpt-plus"
+Repository = "https://github.com/xmsssssss/ontogpt-plus"
+Issues = "https://github.com/xmsssssss/ontogpt-plus/issues"
+Upstream = "https://github.com/monarch-initiative/ontogpt"
 
 [build-system]
 requires = ["setuptools>=61.0"]
@@ -57,6 +64,9 @@ web = [
     "fastapi>=0.115.0",
     "python-multipart>=0.0.7",
     "uvicorn>=0.20.0",
+    "python-docx>=1.0.0",
+    "openpyxl>=3.1.0",
+    "neo4j>=5.0.0",
 ]
 docs = [
     "myst-parser>=0.18.1",
@@ -82,6 +92,10 @@ package = true
 
 [tool.setuptools]
 include-package-data = true
+
+[tool.pytest.ini_options]
+# Only the tests/ tree holds automated tests; scripts/dev/ holds manual probes.
+testpaths = ["tests"]
 
 [tool.setuptools.package-data]
 ontogpt = ["*.yaml"]
