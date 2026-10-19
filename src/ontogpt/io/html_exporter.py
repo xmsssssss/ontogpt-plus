@@ -41,25 +41,36 @@ class HTMLExporter(Exporter):
         self.export_results(extraction_output.extracted_object, extraction_output)
         self.export_validation(extraction_output)
         self.h2("YAML Object")
-        self.details(yaml.dump(extraction_output.model_dump()), output, code="yaml")
+        self.details(
+            yaml.dump(extraction_output.model_dump(), allow_unicode=True),
+            output,
+            code="yaml",
+            summary="展开 YAML 结构化数据",
+        )
         self.h2("Prompt")
-        self.details(extraction_output.prompt or "", output)
+        self.details(extraction_output.prompt or "", output, summary="展开送入模型的 Prompt")
         self.h2("Completion")
-        self.details(extraction_output.raw_completion_output or "", output)
+        self.details(
+            extraction_output.raw_completion_output or "", output, summary="展开模型原始返回"
+        )
 
     def export_metadata(self, extraction_output: ExtractionResult):
-        self.h1("Extraction Results:\n\n")
+        self.h1("Extraction Results")
         self.h2("Input")
-        self.i(extraction_output.input_text or "")
+        self.details(
+            extraction_output.input_text or "",
+            self._require_output(),
+            summary="展开本次送入的输入原文",
+        )
 
     def export_validation(self, extraction_output: ExtractionResult):
         """Write the term validation section."""
         self.h2("Validation")
         report = extraction_output.validation
         if report is None:
-            self.w("<p>Term validation was not run.</p>\n")
+            self.raw("<p>Term validation was not run.</p>\n")
             return
-        self.w(
+        self.raw(
             f"<p>Checked {report.total_terms or 0} grounded identifiers with "
             f"{html.escape(report.validator or '')}: {report.valid_terms or 0} valid, "
             f"{report.replaced_terms or 0} replaced, {report.unresolved_terms or 0} unresolved, "
@@ -68,7 +79,7 @@ class HTMLExporter(Exporter):
         )
         if not report.results:
             return
-        self.w(
+        self.raw(
             "<table>\n<tr><th>Status</th><th>Identifier</th><th>Extracted label</th>"
             "<th>Ontology label</th><th>Replacement</th><th>Note</th></tr>\n"
         )
@@ -83,12 +94,12 @@ class HTMLExporter(Exporter):
                 )
             if replacement and r.replacement_label:
                 replacement += f" ({html.escape(r.replacement_label)})"
-            self.w(
+            self.raw(
                 f"<tr><td>{status}</td><td>{ident}</td><td>{html.escape(r.label or '')}</td>"
                 f"<td>{html.escape(r.ontology_label or '')}</td><td>{replacement}</td>"
                 f"<td>{html.escape(r.message or '')}</td></tr>\n"
             )
-        self.w("</table>\n")
+        self.raw("</table>\n")
 
     def export_results(self, obj: Any, extraction_output: ExtractionResult):
         self.h2("Results")
@@ -142,10 +153,12 @@ class HTMLExporter(Exporter):
             output.write(str(value))
         output.write("\n")
 
-    def details(self, text: str, output: Union[BytesIO, TextIO], code: str = ""):
+    def details(self, text: str, output: Union[BytesIO, TextIO], code: str = "", summary: str = ""):
         if isinstance(output, BytesIO):
             output = TextIOWrapper(output, encoding="utf-8")
         output.write("<details>\n")
+        if summary:
+            output.write(f"<summary>{html.escape(summary)}</summary>\n")
         output.write("<pre>\n")
         output.write(html.escape(text))
         output.write("\n</pre>\n")
@@ -173,7 +186,7 @@ class HTMLExporter(Exporter):
         self.tag("h1", text)
 
     def h2(self, text: str):
-        self.tag("h1", text)
+        self.tag("h2", text)
 
     def h3(self, text: str):
         self.tag("h3", text)
@@ -184,8 +197,9 @@ class HTMLExporter(Exporter):
     def tag(self, tag: str, text: str):
         self._require_output().write(f"<{tag}>{text}</{tag}>\n")
 
-    def w(self, text: str):
-        self._require_output().write(html.escape(text))
+    def raw(self, text: str):
+        """Write a raw HTML fragment; dynamic values must already be escaped by the caller."""
+        self._require_output().write(text)
 
     def _require_output(self) -> TextIO:
         if self.output is None:

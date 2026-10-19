@@ -25,6 +25,31 @@ _NULL_LIKE_TOKENS = frozenset(
         "none provided",
         "no value",
         "no value provided",
+        # Chinese common null-like tokens
+        "无",
+        "暂无",
+        "未知",
+        "未提及",
+        "未明确",
+        "未明确指定",
+        "未提供",
+        "未提供具体机理描述",
+        "未提及具体机理",
+        "未注明",
+        "不详",
+        "设联会提供",
+        "已配置/已具备",
+        "对应文本未直接提及",
+        "文本未直接提及",
+        "文中未直接提及",
+        "文中未提及",
+        "空",
+        "不适用",
+        "无数据",
+        "无描述",
+        "无具体要求",
+        "见表",
+        "见图",
     }
 )
 
@@ -64,7 +89,12 @@ def is_null_like_value(text: Optional[str]) -> bool:
     core = stripped.strip(_NULL_LIKE_WRAPPERS)
     if not core:
         return True
-    return core.lower() in _NULL_LIKE_TOKENS
+    core_lower = core.lower()
+    if core_lower in _NULL_LIKE_TOKENS or core in _NULL_LIKE_TOKENS:
+        return True
+    if re.match(r"^(未(明确|提及|提供|注明|详|描述)|无(具体|特别|要求|相关|明显)|暂无|不详|见表|见图)", core):
+        return True
+    return False
 
 
 def split_on_one_of(text: str, separators: List[str]) -> List[str]:

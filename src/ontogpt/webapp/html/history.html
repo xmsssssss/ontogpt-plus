@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OntoGPT Studio · 任务历史与统计</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <header class="app-bar">
+      <div class="app-bar-inner">
+        <div class="brand">
+          <div class="logo-mark">OG</div>
+          <div class="brand-text">
+            <h1>OntoGPT Studio · 任务历史</h1>
+            <p>抽取任务台账 · 运行统计 · 结果回溯与重跑</p>
+          </div>
+        </div>
+        <nav class="app-nav">
+          <a class="nav-pill" href="/">🧩 抽取工作台</a>
+          <a class="nav-pill is-active" href="/history">📚 任务历史与统计</a>
+          <a class="nav-pill" href="/explorer">🌐 Ontology Explorer</a>
+          <a class="nav-pill is-solid" href="/">➕ 新建抽取任务</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="shell">
+      <div class="page-head">
+        <h2>任务台账与运行统计</h2>
+        <p class="page-desc">
+          记录每一次抽取任务的模板、模型、文本体量与执行状态。可在此回溯历史结果、携带原文重跑，
+          或按状态与关键词快速定位某次抽取。
+        </p>
+      </div>
+
+      <!-- 统计概览 -->
+      <div class="section-head">
+        <span class="section-num">01</span>
+        <div>
+          <h3>运行概览</h3>
+          <p class="section-desc">以下指标基于全部历史任务累计统计，删除记录后会即时重算。</p>
+        </div>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-label">📋 总抽取任务数</div>
+          <div class="stat-value" id="statTotal">{{ stats.total }}</div>
+          <div class="stat-sub">所有历史任务记录总和</div>
+        </div>
+        <div class="stat-card is-ok">
+          <div class="stat-label">✅ 已完成抽取</div>
+          <div class="stat-value" style="color: var(--ok-700);" id="statCompleted">{{ stats.completed }}</div>
+          <div class="stat-sub">成功生成结构化结果与 OWL 公理</div>
+        </div>
+        <div class="stat-card is-warn">
+          <div class="stat-label">⏹ 已手动停止</div>
+          <div class="stat-value" style="color: var(--warn-700);" id="statStopped">{{ stats.stopped }}</div>
+          <div class="stat-sub">运行途中被人工中断</div>
+        </div>
+        <div class="stat-card is-info">
+          <div class="stat-label">📄 累计处理文本体量</div>
+          <div class="stat-value" style="color: var(--brand-600);" id="statChars">{{ "{:,}".format(stats.total_chars) }} 字符</div>
+          <div class="stat-sub">涵盖 PDF / Word / 长规程文档</div>
+        </div>
+      </div>
+
+      <!-- 任务列表 -->
+      <div class="section-head">
+        <span class="section-num">02</span>
+        <div>
+          <h3>历史任务记录</h3>
+          <p class="section-desc">
+            默认按创建时间倒序展示最近 200 条任务；可查看结果、携带原文档与配置重跑，或清理单条与全部记录。
+          </p>
+        </div>
+      </div>
+
+      <div class="card" style="padding: 16px 20px; margin-bottom: 16px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 260px; max-width: 460px;">
+            <input
+              type="text"
+              id="searchInput"
+              class="input"
+              placeholder="搜索任务名称、文档标题或模板架构..."
+              oninput="filterTasks()"
+            />
+          </div>
+          <div style="display: flex; align-items: center; gap: 9px; flex-wrap: wrap;">
+            <select id="statusFilter" class="select" style="width: auto;" onchange="filterTasks()">
+              <option value="all">全部状态</option>
+              <option value="completed">已完成 (completed)</option>
+              <option value="stopped">已停止 (stopped)</option>
+              <option value="failed">失败 (failed)</option>
+            </select>
+            <a href="/api/export-merged-owl" class="btn btn-secondary btn-sm" style="text-decoration: none;" title="将所有已完成任务的图谱融合成一个整体 OWL 知识总库">
+              🌐 导出融合 OWL 知识总库
+            </a>
+            <button class="btn btn-ghost btn-sm" style="color: #be123c; border-color: #fecdd3; background: #fff1f2;" onclick="clearAllHistory()">
+              🗑 清空全部历史记录
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 32%;">文档与任务摘要</th>
+              <th>知识模板</th>
+              <th>大模型</th>
+              <th>文本字符量</th>
+              <th>执行状态</th>
+              <th>创建时间</th>
+              <th style="text-align: right; width: 226px;">操作</th>
+            </tr>
+          </thead>
+          <tbody id="taskTableBody">
+            {% if tasks %}
+              {% for t in tasks %}
+              <tr class="task-row" data-id="{{ t.id }}" data-status="{{ t.status }}" data-title="{{ t.title }}" data-model="{{ t.datamodel }}">
+                <td>
+                  <div class="cell-title" title="{{ t.title }}">{{ t.title }}</div>
+                  <div class="cell-sub">ID: {{ t.id[:18] }}...</div>
+                </td>
+                <td><span class="tag tag-neutral tag-mono">{{ t.datamodel }}</span></td>
+                <td><span class="tag tag-neutral tag-mono tag-clip" title="{{ t.llm_model }}">{{ t.llm_model }}</span></td>
+                <td class="cell-muted">{{ "{:,}".format(t.char_count) }} 字符</td>
+                <td>
+                  {% if t.status == 'completed' %}
+                    <span class="tag tag-ok">✅ 已完成</span>
+                  {% elif t.status == 'stopped' %}
+                    <span class="tag tag-warn">⏹ 已停止</span>
+                  {% elif t.status == 'failed' %}
+                    <span class="tag tag-err">❌ 失败</span>
+                  {% else %}
+                    <span class="tag tag-info">⏳ 运行中</span>
+                  {% endif %}
+                </td>
+                <td class="cell-muted">{{ t.created_at }}</td>
+                <td>
+                  <div class="cell-actions">
+                    {% if t.has_result %}
+                    <a href="/task/{{ t.id }}" class="btn btn-ghost btn-sm" title="查看该次抽取的结构化结果与图谱">👁 结果</a>
+                    {% endif %}
+                    <a href="/?task_id={{ t.id }}" class="btn btn-ghost btn-sm" style="color: #1d4ed8; border-color: #bfdbfe; background: #eff6ff;" title="携带本次文档与配置回到首页重新提取">🔁 重跑</a>
+                    <button class="btn btn-ghost btn-sm" style="color: #dc2626; border-color: #fecaca;" onclick="deleteSingleTask('{{ t.id }}')" title="删除此条记录">🗑 删除</button>
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            {% else %}
+              <tr>
+                <td colspan="7">
+                  <div class="empty-state">
+                    <div class="empty-icon">📭</div>
+                    <div class="empty-title">暂无历史任务记录</div>
+                    <p class="empty-desc">从工作台提交第一次抽取任务后，这里会记录模板、模型与执行状态。</p>
+                    <a href="/" class="btn btn-primary">立即开始新任务</a>
+                  </div>
+                </td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </main>
+
+    <footer class="app-foot">
+      <div class="foot-row">
+        <span class="foot-tag">SQLite Task Store</span>
+        <span class="foot-tag">SPIRES Engine</span>
+        <span class="foot-tag">LinkML</span>
+      </div>
+      <p>
+        基于 <a href="https://github.com/monarch-initiative/ontogpt" target="_blank" rel="noopener">OntoGPT</a>
+        构建 · 本地化知识抽取与本体对齐工作台
+      </p>
+    </footer>
+
+    <script>
+      function filterTasks() {
+        const query = document.getElementById("searchInput").value.toLowerCase().trim();
+        const status = document.getElementById("statusFilter").value;
+        const rows = document.querySelectorAll(".task-row");
+
+        rows.forEach((row) => {
+          const title = (row.getAttribute("data-title") || "").toLowerCase();
+          const model = (row.getAttribute("data-model") || "").toLowerCase();
+          const rowStatus = row.getAttribute("data-status");
+
+          const matchesQuery = !query || title.includes(query) || model.includes(query);
+          const matchesStatus = status === "all" || rowStatus === status;
+
+          if (matchesQuery && matchesStatus) {
+            row.style.display = "";
+          } else {
+            row.style.display = "none";
+          }
+        });
+      }
+
+      function deleteSingleTask(taskId) {
+        if (!confirm("确定要删除这条任务记录吗？")) return;
+        fetch(`/api/history/${taskId}`, { method: "DELETE" })
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.success) {
+              const row = document.querySelector(`.task-row[data-id="${taskId}"]`);
+              if (row) row.remove();
+              refreshStats();
+            } else {
+              alert("删除失败: " + (data.error || "未知原因"));
+            }
+          })
+          .catch((err) => alert("请求异常: " + err.message));
+      }
+
+      function clearAllHistory() {
+        if (!confirm("⚠️ 确定要清空全部任务历史记录吗？此操作不可撤销！")) return;
+        fetch("/api/history", { method: "DELETE" })
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.success) {
+              window.location.reload();
+            } else {
+              alert("清空失败: " + (data.error || "未知原因"));
+            }
+          })
+          .catch((err) => alert("请求异常: " + err.message));
+      }
+
+      function refreshStats() {
+        fetch("/api/history/stats")
+          .then((r) => r.json())
+          .then((stats) => {
+            document.getElementById("statTotal").innerText = stats.total;
+            document.getElementById("statCompleted").innerText = stats.completed;
+            document.getElementById("statStopped").innerText = stats.stopped;
+            document.getElementById("statChars").innerText = stats.total_chars.toLocaleString() + " 字符";
+          })
+          .catch(() => {});
+      }
+    </script>
+  </body>
+</html>

@@ -14,8 +14,8 @@ def dump_minimal_json(obj: Any, minimize=True, file: Optional[TextIO] = None) ->
     """Dump a JSON string, but eliminate Nones and empty lists and dicts."""
     if not file:
         file = io.StringIO()
-        json.dump(eliminate_empty(obj, not minimize), file, indent=2)
+        json.dump(eliminate_empty(obj, not minimize), file, indent=2, ensure_ascii=False)
         return file.getvalue()
     else:
-        json.dump(eliminate_empty(obj, not minimize), file, indent=2)
+        json.dump(eliminate_empty(obj, not minimize), file, indent=2, ensure_ascii=False)
         return ""

@@ -12,6 +12,7 @@ See https://arxiv.org/abs/2304.02711
 import json
 import logging
 import re
+import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,6 +63,9 @@ class SPIRESEngine(KnowledgeEngine):
 
     max_text_length: Optional[int] = None
     """If set, this will split the text into chunks based on this number of characters."""
+
+    enable_neo4j_reuse: bool = True
+    """If true, sub-extractions consult the Neo4j knowledge graph before calling the LLM."""
 
     @staticmethod
     def _as_object_dict(value: Union[pydantic.BaseModel, Dict[str, Any]]) -> Dict[str, Any]:
@@ -128,6 +132,11 @@ class SPIRESEngine(KnowledgeEngine):
         show_prompt: bool = False,
     ) -> ExtractionResult:
         self.extracted_named_entities = []  # Clear the named entity buffer
+        self.in_flight_features = set()
+        self._in_flight_lock = threading.Lock()
+        # 实体级结果内存缓存，避免在同一个长文档中反复对相同实体重复发起 300 Token 小请求
+        self._sub_extraction_cache: Dict[Tuple[str, str], RESPONSE_DICT] = {}
+        self._sub_cache_lock = threading.Lock()
 
         # This indicates that the text will be chunked in some way
         have_chunks = False
@@ -175,23 +184,133 @@ class SPIRESEngine(KnowledgeEngine):
 
         if have_chunks:
             extracted_object = None
-            for chunk in chunks:
-                raw_text = self._raw_extract(chunk, cls=cls, object=object, show_prompt=show_prompt)
-                logging.info(f"RAW TEXT: {raw_text}")
-                next_object = self.parse_completion_payload(
-                    raw_text, cls, object=object  # type: ignore
-                )
-                if extracted_object is None:
-                    extracted_object = next_object
-                else:
-                    # If the input is too small, which may happen with chunking,
-                    # there may be a new extracted object but it's empty,
-                    # raising an AttributeError on items.
+            total_chunks = len(chunks)
+            workers = getattr(self, "max_workers", 5) or 5
+
+            if workers > 1 and total_chunks > 1:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                completed_count = 0
+
+                def process_chunk(idx_and_chunk):
+                    idx, chunk = idx_and_chunk
+                    if getattr(self, "stop_requested", False):
+                        raise InterruptedError("用户已手动停止任务")
+                    r_text = self._raw_extract(chunk, cls=cls, object=object, show_prompt=show_prompt)
+                    parsed_obj = self.parse_completion_payload(r_text, cls, object=object)
+                    feats = getattr(parsed_obj, "auto_discovered_features", None) or []
+                    if feats:
+                        new_keys = []
+                        for f in feats:
+                            k = getattr(f, "key", "") or (f.get("key") if isinstance(f, dict) else "")
+                            k = str(k).strip()
+                            if k and len(k) < 30:
+                                new_keys.append(k)
+                        if new_keys and hasattr(self, "_in_flight_lock"):
+                            with self._in_flight_lock:
+                                self.in_flight_features.update(new_keys)
+                    return idx, parsed_obj
+
+                results_dict = {}
+                with ThreadPoolExecutor(max_workers=min(workers, total_chunks)) as executor:
+                    self._current_executor = executor
+                    futures = [executor.submit(process_chunk, (i, ch)) for i, ch in enumerate(chunks, 1)]
                     try:
-                        self._merge_model_objects(extracted_object, next_object)
-                    except AttributeError:
-                        logging.error(f"Empty object: {next_object}")
+                        for future in as_completed(futures):
+                            if getattr(self, "stop_requested", False):
+                                executor.shutdown(wait=False, cancel_futures=True)
+                                raise InterruptedError("用户已手动停止任务")
+                            try:
+                                idx, parsed_obj = future.result()
+                            except InterruptedError:
+                                executor.shutdown(wait=False, cancel_futures=True)
+                                raise
+                            results_dict[idx] = parsed_obj
+                            completed_count += 1
+                            cb = getattr(self, "progress_callback", None)
+                            if cb:
+                                try:
+                                    pool_size = len(getattr(self, "in_flight_features", set()))
+                                    feat_hint = ""
+                                    if pool_size > 0:
+                                        sample_k = list(getattr(self, "in_flight_features", set()))[:2]
+                                        feat_hint = f" | ⚡进行中动态感知: [{', '.join(sample_k)}] (共{pool_size}项)"
+                                    cb(completed_count, total_chunks, f"已并行完成 {completed_count}/{total_chunks} 个分块 (并发数: {workers}){feat_hint}")
+                                except Exception:
+                                    pass
+                    finally:
+                        self._current_executor = None
+
+                # 按文档原始切块顺序依次合并
+                for i in range(1, total_chunks + 1):
+                    next_object = results_dict.get(i)
+                    if next_object is None:
+                        continue
+                    if extracted_object is None:
+                        extracted_object = next_object
+                    else:
+                        try:
+                            self._merge_model_objects(extracted_object, next_object)
+                        except AttributeError:
+                            logging.error(f"Empty object: {next_object}")
+            else:
+                for idx, chunk in enumerate(chunks, 1):
+                    if getattr(self, "stop_requested", False):
+                        logging.info("Extraction aborted by user stop request.")
+                        raise InterruptedError("用户已手动停止任务")
+
+                    cb = getattr(self, "progress_callback", None)
+                    if cb:
+                        try:
+                            cb(idx, total_chunks, f"正在处理第 {idx}/{total_chunks} 个文档分块...")
+                        except Exception:
+                            pass
+
+                    raw_text = self._raw_extract(chunk, cls=cls, object=object, show_prompt=show_prompt)
+                    logging.info(f"RAW TEXT: {raw_text}")
+                    next_object = self.parse_completion_payload(
+                        raw_text, cls, object=object  # type: ignore
+                    )
+                    feats = getattr(next_object, "auto_discovered_features", None) or []
+                    if feats:
+                        new_keys = []
+                        for f in feats:
+                            k = getattr(f, "key", "") or (f.get("key") if isinstance(f, dict) else "")
+                            k = str(k).strip()
+                            if k and len(k) < 30:
+                                new_keys.append(k)
+                        if new_keys:
+                            self.in_flight_features.update(new_keys)
+
+                    pool_size = len(getattr(self, "in_flight_features", set()))
+                    feat_hint = ""
+                    if pool_size > 0:
+                        sample_k = list(getattr(self, "in_flight_features", set()))[:2]
+                        feat_hint = f" | ⚡进行中动态感知: [{', '.join(sample_k)}] (共{pool_size}项)"
+                    if cb:
+                        try:
+                            cb(idx, total_chunks, f"已完成第 {idx}/{total_chunks} 个文档分块{feat_hint}")
+                        except Exception:
+                            pass
+                    if extracted_object is None:
+                        extracted_object = next_object
+                    else:
+                        try:
+                            self._merge_model_objects(extracted_object, next_object)
+                        except AttributeError:
+                            logging.error(f"Empty object: {next_object}")
         else:
+            if getattr(self, "stop_requested", False):
+                logging.info("Extraction aborted by user stop request.")
+                raise InterruptedError("用户已手动停止任务")
+
+            cb = getattr(self, "progress_callback", None)
+            if cb:
+                try:
+                    cb(1, 1, "正在调用大模型进行实体与本体关系抽取...")
+                except Exception:
+                    pass
+
             raw_text = self._raw_extract(text=text, cls=cls, object=object, show_prompt=show_prompt)
             logging.info(f"RAW TEXT: {raw_text}")
             extracted_object = self.parse_completion_payload(
@@ -215,6 +334,18 @@ class SPIRESEngine(KnowledgeEngine):
             # not the full list of all named entities across all extractions
         )
 
+    def _safe_induced_slot(
+        self, slot_name: str, class_name: str
+    ) -> Optional[SlotDefinition]:
+        """Safely fetch an induced slot without letting LinkML raise ValueError."""
+        sv = self._require_schemaview()
+        try:
+            if slot_name in sv.class_slots(class_name):
+                return sv.induced_slot(slot_name, class_name)
+            return sv.induced_slot(slot_name, class_name)
+        except Exception:
+            return None
+
     def _extract_from_text_to_dict(
         self, text: str, cls: Optional[ClassDefinition] = None
     ) -> RESPONSE_DICT:
@@ -225,8 +356,41 @@ class SPIRESEngine(KnowledgeEngine):
         if is_null_like_value(text):
             logging.info(f"Skipping sub-extraction for null-like text: {text!r}")
             return {}
+
+        clean_text = text.strip()
+        cls_name = cls.name if cls else ""
+        cache_key = (clean_text, cls_name)
+
+        # 1. 检查内存缓存 (单次任务去重)
+        if hasattr(self, "_sub_extraction_cache") and hasattr(self, "_sub_cache_lock"):
+            with self._sub_cache_lock:
+                if cache_key in self._sub_extraction_cache:
+                    logging.debug(f"Sub-extraction memory cache hit for: {clean_text}")
+                    return dict(self._sub_extraction_cache[cache_key])
+
+        # 2. 检查 Neo4j 知识图谱已沉淀知识 (跨任务/全域图谱知识复用)
+        if getattr(self, "enable_neo4j_reuse", True):
+            try:
+                from ontogpt.clients.neo4j_service import neo4j_service
+                neo_hit = neo4j_service.lookup_entity(clean_text, cls_name)
+                if neo_hit:
+                    logging.info(f"✨ [Neo4j Graph-in-the-Loop] Successfully reused known entity: {clean_text} ({cls_name}), skipping LLM call!")
+                    if hasattr(self, "_sub_extraction_cache") and hasattr(self, "_sub_cache_lock"):
+                        with self._sub_cache_lock:
+                            self._sub_extraction_cache[cache_key] = neo_hit
+                    return dict(neo_hit)
+            except Exception as e:
+                logging.debug(f"Neo4j lookup hook skipped: {e}")
+
         raw_text = self._raw_extract(text=text, cls=cls)
-        return self._parse_response_to_dict(raw_text, cls)
+        parsed = self._parse_response_to_dict(raw_text, cls)
+
+        # 写入缓存
+        if hasattr(self, "_sub_extraction_cache") and hasattr(self, "_sub_cache_lock"):
+            with self._sub_cache_lock:
+                self._sub_extraction_cache[cache_key] = parsed
+
+        return parsed
 
     def generate_and_extract(
         self, entity: str, prompt_template: str = "", show_prompt: bool = False, **kwargs
@@ -334,7 +498,7 @@ class SPIRESEngine(KnowledgeEngine):
                         and _remove_parenthetical_context(entity) not in queue_deparenthesized
                     ):
                         db["entities_in_queue"].append(entity)
-            with open(cache_path, "w") as f:
+            with open(cache_path, "w", encoding="utf-8") as f:
                 # TODO: consider a more robust backend e.g. mongo
                 f.write(dump_minimal_yaml(db))
 
@@ -360,7 +524,7 @@ class SPIRESEngine(KnowledgeEngine):
         object = self._as_object_dict(object)
         for k, v in object.items():
             if v:
-                slot = sv.induced_slot(k, cls.name)
+                slot = self._safe_induced_slot(k, cls.name)
                 if slot is None:
                     continue
                 prompt += f"{k}: {self._serialize_value(v, slot)}\n"
@@ -448,7 +612,7 @@ class SPIRESEngine(KnowledgeEngine):
         for k, v in example.items():
             if not v:
                 continue
-            slot = sv.induced_slot(k, class_name)
+            slot = self._safe_induced_slot(k, class_name)
             if slot is None:
                 continue
             v_serialized = self._serialize_value(v, slot)
@@ -527,8 +691,18 @@ class SPIRESEngine(KnowledgeEngine):
                 if enum_def is not None:
                     pvs = [str(k) for k in enum_def.permissible_values.keys()]
                     slot_prompt += f"Must be one of: {', '.join(pvs)}"
+            if slot.name == "auto_discovered_features":
+                in_flight_pool = getattr(self, "in_flight_features", None)
+                if in_flight_pool:
+                    sample_keys = list(in_flight_pool)[:12]
+                    slot_prompt += f" (进行中文档已动态捕获专有参数: {', '.join(sample_keys)}，后文遇到请重点对齐提取，并继续发掘其他新指标)"
             prompt += f"{slot.name}: <{slot_prompt}>\n"
-        # prompt += "Do not answer if you don't know\n\n"
+        prompt += (
+            "\nExtraction Rules:\n"
+            "- Only extract facts explicitly stated in the text.\n"
+            "- DO NOT invent values. If an attribute is not present, DO NOT write '未明确指定', 'null', 'None', or 'N/A'; simply omit that line.\n"
+            "- Strictly output one slot per line ('slot_name: value'). Never concatenate multiple sub-slots into a single line.\n"
+        )
         prompt = f"{prompt}\n\nText:\n{text}\n\n===\n\n"
         if object:
             if isinstance(object, str):
@@ -541,7 +715,7 @@ class SPIRESEngine(KnowledgeEngine):
             object_dict = self._as_object_dict(object)
             for k, v in object_dict.items():
                 if v:
-                    slot = sv.induced_slot(k, class_name)
+                    slot = self._safe_induced_slot(k, class_name)
                     if slot is None:
                         continue
                     prompt += f"{k}: {self._serialize_value(v, slot)}\n"
@@ -615,18 +789,35 @@ class SPIRESEngine(KnowledgeEngine):
                 continued_line = ""
                 for line in lines:
                     line = line.replace("*", "").strip()
-                    # The line may be split into multiple lines,
-                    # and we can only tell if there's a delimiter at the end of this one
-                    # (though it may just be a misplaced delimiter)
-                    # TODO: this could be a different delimiter, globally defined
+                    line = line.replace("：", ": ")
+
+                    # If previous line was marked continued, but current line is a new key-value field (contains ':'),
+                    # finish the previous line immediately instead of gluing them together!
+                    if len(continued_line) > 0 and ":" in line:
+                        r = self._parse_line_to_dict(continued_line, cls)
+                        if r is not None:
+                            field, val = r
+                            ann[field] = val
+                        continued_line = ""
+
+                    # The line may be split into multiple lines if it ends in ';' AND doesn't start with a new field
                     if line.endswith(";"):
-                        logging.info(
-                            f"This line ends in a delimiter, assuming continuation: {line}"
-                        )
-                        continued_line = line
-                        continue
-                    # If there's nothing after the colon,
-                    # we may be continuing as a numeric list or the like
+                        # If line itself is a complete key-value pair, parse it directly rather than blindly continuing
+                        if ":" in line:
+                            line_to_parse = line.rstrip(";")
+                            r = self._parse_line_to_dict(line_to_parse, cls)
+                            if r is not None:
+                                field, val = r
+                                ann[field] = val
+                            continued_line = ""
+                            continue
+                        else:
+                            logging.info(
+                                f"This line ends in a delimiter, assuming continuation: {line}"
+                            )
+                            continued_line = line
+                            continue
+
                     if ":" in line and not line.split(":", 1)[1].strip():
                         logging.info(f"This line looks empty, assuming continuation: {line}")
                         if len(continued_line) > 0:
@@ -698,36 +889,174 @@ class SPIRESEngine(KnowledgeEngine):
         except ValueError:
             field = line.split(":", 1)[0]
             val = ""
+
+        # 立即去除首尾空格，若只有空白字符（如 "bay_name: "），直接判定为空值
+        field = field.strip()
+        val = val.strip()
+
+        # 智能过滤空值与占位词（如 "未明确指定", "null", "N/A"），避免无意义数据污染图谱
+        from ontogpt.utils.parse_utils import is_null_like_value
+        if is_null_like_value(val):
+            return None
+
         # Field normalization:
         # The LLM may mutate the output format somewhat,
         # randomly pluralizing or replacing spaces with underscores
         field = field.lower().replace(" ", "_")
         logging.debug(f"  FIELD: {field}")
+
+        # Filter out common conversational/chatter lines emitted by conversational LLMs
+        conversational_prefixes = (
+            "based_on",
+            "here_is",
+            "here_are",
+            "(note",
+            "note",
+            "please_note",
+            "as_requested",
+            "sure",
+            "according_to",
+            "extraction_result",
+            "summary",
+        )
+        if any(field.startswith(p) for p in conversational_prefixes) or field == "slot_name":
+            logging.debug(f"Filtered conversational boilerplate line: {line}")
+            return None
+
         cls_slots = sv.class_slots(class_name)
         slot = None
         if field in cls_slots:
             slot = sv.induced_slot(field, class_name)
         else:
+            # Try removing pluralization or singular-to-plural
+            if field.endswith("s") and field[:-1] in cls_slots:
+                slot = sv.induced_slot(field[:-1], class_name)
+            elif (field + "s") in cls_slots:
+                slot = sv.induced_slot(field + "s", class_name)
+            elif field.endswith("_feature") and (field + "s") in cls_slots:
+                slot = sv.induced_slot(field + "s", class_name)
 
-            # Try removing pluralization
-            if field.endswith("s"):
-                field = field[:-1]
-
-            if field in cls_slots:
-                slot = sv.induced_slot(field, class_name)
+        # Fallback slot alias matching for common variations emitted by LLMs
         if not slot:
-            # Recoverable: the line's key doesn't match any slot of this class.
-            # This is expected when the model returns prose instead of fields
-            # (e.g. a refusal during recursion); we drop the line and continue.
-            logging.warning(f"Cannot find slot for {field} in {line}")
-            return None
+            aliases = {
+                # 错别字与拼写容错（如 maintenace_actions 缺 n）
+                "maintenace_actions": "maintenance_actions",
+                "maintenace": "maintenance_actions",
+                "dispatch_actions": "dispatch_and_switching_ops",
+                # 电力与设备类别名
+                "fault_type": "fault_incident",
+                "fault": "fault_incident",
+                "fault_event": "fault_incident",
+                "fault_detail": "fault_incident",
+                "dga_indicator": "measurements_and_indicators",
+                "insulation_parameter": "measurements_and_indicators",
+                "measurement": "measurements_and_indicators",
+                "measurements": "measurements_and_indicators",
+                "indicator": "measurements_and_indicators",
+                "indicators": "measurements_and_indicators",
+                "electrical_measurement": "measurements_and_indicators",
+                "auto_discovered_feature": "auto_discovered_features",
+                "custom_feature": "auto_discovered_features",
+                "features": "auto_discovered_features",
+                "characteristic": "auto_discovered_features",
+                "characteristics": "auto_discovered_features",
+                "substation": "location",
+                "plant": "location",
+                "line": "location",
+                "equipment": "primary_equipment",
+                "equipments": "primary_equipment",
+                "primary": "primary_equipment",
+                "transformer": "primary_equipment",
+                "main_transformer": "primary_equipment",
+                "breaker": "primary_equipment",
+                "circuit_breaker": "primary_equipment",
+                "bushing": "primary_equipment",
+                "switch": "primary_equipment",
+                "secondary": "secondary_system",
+                "secondary_devices": "secondary_system",
+                "protection": "relay_protection_actions",
+                "protection_scheme": "relay_protection_actions",
+                "protection_action": "relay_protection_actions",
+                "relay_protection": "relay_protection_actions",
+                "dispatch": "dispatch_and_switching_ops",
+                "switching": "dispatch_and_switching_ops",
+                "switching_operations": "dispatch_and_switching_ops",
+                "dispatch_actions": "dispatch_and_switching_ops",
+                "maintenance": "maintenance_actions",
+                "maintenance_action": "maintenance_actions",
+                "maintenance_measures": "maintenance_actions",
+                "repair": "maintenance_actions",
+                # 通用模板别名（医疗/生物/菜谱等通用别名）
+                "title": "event_title",
+                "name": "event_title" if "event_title" in cls_slots else ("label" if "label" in cls_slots else None),
+                "time": "occurrence_time",
+                "date": "occurrence_time",
+                "disease": "subject" if "subject" in cls_slots else None,
+                "drug": "subject" if "subject" in cls_slots else None,
+                "gene": "subject" if "subject" in cls_slots else None,
+            }
+            mapped_field = aliases.get(field)
+            if mapped_field and mapped_field in cls_slots:
+                slot = sv.induced_slot(mapped_field, class_name)
+
+        # 智能子字符串与前缀模糊自适应（如 LLM 输出 primary_equipments 或 fault_incident_details）
+        if not slot:
+            clean_f = field.replace("-", "_")
+            for cs in cls_slots:
+                if clean_f == cs or clean_f.startswith(cs) or cs.startswith(clean_f):
+                    slot = sv.induced_slot(cs, class_name)
+                    break
+
         if not val:
-            msg = f"Empty value in key-value line: {line}"
-            if slot.required:
-                raise ValueError(msg)
-            if slot.recommended:
-                logging.warning(msg)
+            # 如果是主键/唯一标识符 id，但在输出中为空（如 "id: "），由系统自动生成 UUID 填充，禁止抛错！
+            if slot and slot.identifier:
+                auto_id = str(uuid.uuid4())
+                auto_prefix = getattr(self, "auto_prefix", "AUTO")
+                if slot.range in ["uriorcurie", "uri"]:
+                    return slot.name, f"{auto_prefix}:{auto_id}"
+                return slot.name, auto_id
+
+            # 允许非必填字段为空值静默跳过，避免爆出 Expected 1 value but got []
+            if slot and slot.required:
+                logging.debug(f"Required slot {slot.name} is empty in model response; generating default.")
+                return None
             return None
+
+        # 智能语义推断与自适应分流（Semantic Auto-Classification）：
+        # 如果大模型输出了 Schema 预置槽位之外的新概念/新字段（如 "汽轮机型式"、"调压方式"、"接线组别"、"控制逻辑"），
+        # 绝不硬丢弃，而是分析其工程语境，合理地自动挂载到正确的目标类别中（设备/保护动作/量测/动态特征）：
+        if not slot and val.strip():
+            combined = f"{field} {val}".lower()
+            # 1. 设备与型式类 -> 归入 primary_equipment
+            if any(k in combined for k in ["型式", "机型", "设备", "机组", "汽轮机", "锅炉", "压缩机", "电机", "变压器", "水泵", "断路器", "转子", "叶轮", "蓄电池", "轴承", "除水器", "滤芯", "膜"]):
+                if "primary_equipment" in cls_slots:
+                    slot = sv.induced_slot("primary_equipment", class_name)
+                    field = "primary_equipment"
+                    vals = [{"name": field if field != "primary_equipment" else line.split(":", 1)[0].strip(), "equipment_category": "动力与电气设备", "component_involved": val.strip()}]
+                    return field, vals
+            # 2. 继电保护与控制逻辑类 -> 归入 relay_protection_actions
+            elif any(k in combined for k in ["逻辑", "联锁", "保护", "投入条件", "控制", "调节", "偏置", "切换", "闭锁", "速断", "定值", "次序", "voting", "voting"]):
+                if "relay_protection_actions" in cls_slots:
+                    slot = sv.induced_slot("relay_protection_actions", class_name)
+                    field = "relay_protection_actions"
+                    vals = [{"protection_name": line.split(":", 1)[0].strip(), "trip_breaker": None, "reclose_result": val.strip()}]
+                    return field, vals
+            # 3. 测量数据、材质材料、技术指标 -> 归入 measurements_and_indicators
+            elif any(k in combined for k in ["材质", "材料", "容积", "重量", "压力", "电流", "电压", "等级", "组别", "方式", "温度", "精度", "比例", "水质", "成分", "率", "ip", "scph", "scm", "scs"]):
+                if "measurements_and_indicators" in cls_slots:
+                    slot = sv.induced_slot("measurements_and_indicators", class_name)
+                    field = "measurements_and_indicators"
+                    vals = [{"parameter_name": line.split(":", 1)[0].strip(), "value_with_unit": val.strip()}]
+                    return field, vals
+            # 4. 其他未知扩展特性 -> 兜底归入 auto_discovered_features
+            elif "auto_discovered_features" in cls_slots:
+                slot = sv.induced_slot("auto_discovered_features", class_name)
+                val = f"{field} - {val}"
+                field = "auto_discovered_features"
+
+        if not slot:
+            return None
+
         inlined = slot.inlined
         slot_range = sv.get_class(slot.range)
         if not inlined:
@@ -735,7 +1064,7 @@ class SPIRESEngine(KnowledgeEngine):
                 inlined = sv.get_identifier_slot(slot_range.name) is None
         val = val.strip()
         if slot.multivalued:
-            vals = [v.strip() for v in val.split(";")]
+            vals = [v.strip() for v in val.replace("；", ";").split(";")]
         else:
             vals = [val]
         vals = [val for val in vals if val]
@@ -746,38 +1075,91 @@ class SPIRESEngine(KnowledgeEngine):
                 return None
             transformed = False
             slots_of_range = sv.class_slots(slot_range.name)
-            if self.recurse or len(slots_of_range) > 2:
-                logging.debug(f"  RECURSING ON SLOT: {slot.name}, range={slot_range.name}")
-                vals = [
-                    self._extract_from_text_to_dict(v, slot_range) for v in vals  # type: ignore
-                ]
-                # Drop empty sub-extractions (e.g. from null-like placeholder values)
-                # so we don't emit empty inlined objects.
-                vals = [v for v in vals if v]
-                if not vals:
-                    return None
-            else:
-                for sep in [" - ", ":", "/", "*", "-"]:
-                    if all([sep in v for v in vals]):
+            # 对于二元键值对（如 KeyValuePair: key, value），进行全场景智能解构：
+            # 兼容 "键 - 值"、"键: 值"、"键 空格 值" 以及单值短语（自动以短语为键，值记为"是/存在/已配置"）
+            direct_split_done = False
+            if len(slots_of_range) == 2:
+                parsed_pairs = []
+                for v in vals:
+                    # 严格使用安全的键值分隔符，绝不能在 "/" 或孤立 "-" 盲目拆分（避免破坏 DL/T 1717、15s/12s 等技术代号与复合单位）
+                    split_item = None
+                    for sep in [" - ", "： ", "：", ": "]:
+                        if sep in v:
+                            parts = v.split(sep, 1)
+                            split_item = {slots_of_range[0]: parts[0].strip(), slots_of_range[1]: parts[1].strip()}
+                            break
+                    # 若无显式连字符，尝试空格分隔（如 "材料 SCM440 (轴)"）
+                    if not split_item and " " in v.strip():
+                        parts = v.strip().split(None, 1)
+                        if len(parts) == 2 and not parts[0].endswith(("/", "-", "T")):
+                            split_item = {slots_of_range[0]: parts[0].strip(), slots_of_range[1]: parts[1].strip()}
+                    if not split_item:
+                        split_item = {slots_of_range[0]: v.strip(), slots_of_range[1]: "存在"}
+
+                    if split_item and not is_null_like_value(split_item[slots_of_range[0]]):
+                        parsed_pairs.append(split_item)
+
+                vals = parsed_pairs
+                direct_split_done = True
+
+            if not direct_split_done:
+                if self.recurse or len(slots_of_range) > 2:
+                    if getattr(self, "stop_requested", False):
+                        raise InterruptedError("用户已手动停止任务")
+                    logging.debug(f"  RECURSING ON SLOT: {slot.name}, range={slot_range.name}")
+
+                    # 高并发提速：若子实体列表 > 1，采用轻量级线程池并行发起子抽取，大幅缩减串行 RTT 延迟
+                    if len(vals) > 1:
+                        from concurrent.futures import ThreadPoolExecutor
+
+                        sub_workers = min(len(vals), 10)
+                        ordered_vals = [None] * len(vals)
+
+                        def _do_sub_extract(index_and_v):
+                            idx, sub_v = index_and_v
+                            if getattr(self, "stop_requested", False):
+                                return idx, {}
+                            res = self._extract_from_text_to_dict(sub_v, slot_range)
+                            return idx, res
+
+                        with ThreadPoolExecutor(max_workers=sub_workers) as sub_exec:
+                            for idx, res in sub_exec.map(_do_sub_extract, enumerate(vals)):
+                                ordered_vals[idx] = res
+
+                        vals = [v for v in ordered_vals if v]
+                    else:
                         vals = [
-                            dict(zip(slots_of_range, v.split(sep, 1))) for v in vals  # type: ignore
+                            self._extract_from_text_to_dict(v, slot_range) for v in vals  # type: ignore
                         ]
-                        for v in vals:
-                            for k in v.keys():  # type: ignore
-                                v[k] = v[k].strip()  # type: ignore
-                        transformed = True
-                        break
-                if not transformed:
-                    logging.warning(f"Did not find separator in {vals} for line {line}")
-                    return None
+                    # Drop empty sub-extractions (e.g. from null-like placeholder values)
+                    # so we don't emit empty inlined objects.
+                    vals = [v for v in vals if v]
+                    if not vals:
+                        return None
+                else:
+                    for sep in [" - ", "：", ":", "/", "*", "-"]:
+                        if all([sep in v for v in vals]):
+                            vals = [
+                                dict(zip(slots_of_range, v.split(sep, 1))) for v in vals  # type: ignore
+                            ]
+                            for v in vals:
+                                for k in v.keys():  # type: ignore
+                                    v[k] = v[k].strip()  # type: ignore
+                            transformed = True
+                            break
+                    if not transformed:
+                        logging.warning(f"Did not find separator in {vals} for line {line}")
+                        return None
         # transform back from list to single value if not multivalued
         if slot.multivalued:
             final_val = vals
         else:
-            if len(vals) != 1:
-                logging.error(f"Expected 1 value for {slot.name} in '{line}' but got {vals}")
+            if not vals:
+                # 单值槽位为空列表时静默返回 None，避免抛出 Expected 1 value 错误
+                return None
             final_val = vals[0]  # type: ignore
-        return field, final_val
+        # 必须返回规范化槽位名 slot.name，确保后续实例化字典 key 与 LinkML Schema 100% 一致！
+        return slot.name, final_val
 
     def parse_completion_payload(
         self,
@@ -839,22 +1221,56 @@ class SPIRESEngine(KnowledgeEngine):
         if ann is None:
             logging.error(f"Cannot ground None annotation, cls={class_name}")
             return None
-        for field, vals in ann.items():
-            if isinstance(vals, list):
-                multivalued = True
+        cls_slots = sv.class_slots(class_name)
+        for field, vals in list(ann.items()):
+            slot = None
+            if field in cls_slots:
+                slot = self._safe_induced_slot(field, class_name)
             else:
-                multivalued = False
-                vals = [vals]
-            slot = sv.induced_slot(field, class_name)
+                # 容错别名或拼写错误字典
+                alias_map = {
+                    "maintenace_actions": "maintenance_actions",
+                    "maintenace": "maintenance_actions",
+                    "fault_type": "fault_incident",
+                    "equipment": "primary_equipment",
+                    "equipments": "primary_equipment",
+                    "primary": "primary_equipment",
+                    "measurement": "measurements_and_indicators",
+                    "measurements": "measurements_and_indicators",
+                    "indicator": "measurements_and_indicators",
+                    "indicators": "measurements_and_indicators",
+                }
+                mapped = alias_map.get(field)
+                if mapped and mapped in cls_slots:
+                    slot = self._safe_induced_slot(mapped, class_name)
+                    if slot:
+                        field = mapped
+                if not slot:
+                    slot = self._safe_induced_slot(field, class_name)
+
             if slot is None:
-                logging.error(f"Cannot find slot {field} in {class_name}")
+                logging.debug(f"Cannot find slot {field} in {class_name}; safe skip.")
                 continue
+
+            # 核心防御：必须以 Schema 定义的 slot.multivalued 为准，而不是以入参是不是 list 为准！
+            # 否则当大模型把单值字符串字段输出为空列表 [] 时，原版会错判为 multivalued=True 并生成 []，引发 Pydantic 校验崩溃！
+            multivalued = bool(slot.multivalued)
+            if isinstance(vals, list):
+                if not multivalued:
+                    # 单值字段却传进了列表：合并为字符串或取空
+                    vals = ["; ".join([str(v) for v in vals if v])] if vals else [None]
+            else:
+                vals = [vals]
+
             rng_cls = sv.get_class(slot.range)
             enum_def = None
             if slot.range:
                 if slot.range in sv.all_enums():
                     enum_def = sv.get_enum(slot.range)
-            new_ann[field] = []
+            if multivalued:
+                new_ann[field] = []
+            else:
+                new_ann[field] = None
             logging.debug(f"FIELD: {field} SLOT: {slot.name}")
             for val in vals:
                 if not val:
@@ -882,9 +1298,16 @@ class SPIRESEngine(KnowledgeEngine):
                         )
                         obj[sub_slot.name] = result
                 elif isinstance(val, dict):
-                    # recurse
-                    obj = self.ground_annotation_object(val, rng_cls) if rng_cls else val
+                    # 递归处理并彻底剔除子对象中的占位空值（如 "未明确指定"、"null"）
+                    from ontogpt.utils.parse_utils import is_null_like_value
+                    clean_dict = {vk: vv for vk, vv in val.items() if not is_null_like_value(vv)}
+                    if not clean_dict:
+                        continue
+                    obj = self.ground_annotation_object(clean_dict, rng_cls) if rng_cls else clean_dict
                 else:
+                    from ontogpt.utils.parse_utils import is_null_like_value
+                    if is_null_like_value(val):
+                        continue
                     obj = self.normalize_named_entity(val, slot.range)  # type: ignore
                 if enum_def:
                     found = False

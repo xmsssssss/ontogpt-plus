@@ -20,6 +20,7 @@ def repr_str(dumper: RoundTripRepresenter, data: str):
 def dump_minimal_yaml(obj: Any, minimize=True, file: Optional[TextIO] = None) -> str:
     """Dump a YAML string, but eliminate Nones and empty lists and dicts."""
     yaml = YAML()
+    yaml.allow_unicode = True
     yaml.representer.add_representer(str, repr_str)
     yaml.default_flow_style = False
     yaml.indent(sequence=4, offset=2)

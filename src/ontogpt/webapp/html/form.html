@@ -1,105 +1,912 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <title>OntoGPT SPIRES: Enter text</title>
-    <style>
-      body {
-        font-family: Arial, sans-serif;
-        margin: 0;
-        padding: 0;
-      }
-
-      form {
-        margin: 20px;
-      }
-
-      select,
-      textarea {
-        width: 100%;
-        padding: 5px;
-        margin-bottom: 10px;
-      }
-
-      input[type="submit"] {
-        padding: 10px 20px;
-        background-color: #4caf50;
-        color: white;
-        border: none;
-        cursor: pointer;
-      }
-
-      .loading {
-        display: none;
-        text-align: center;
-        margin-top: 20px;
-      }
-
-      .loading img {
-        width: 50px;
-        height: 50px;
-      }
-
-      .footer {
-        background-color: #f1f1f1;
-        padding: 20px;
-        text-align: center;
-      }
-    </style>
-    <script>
-      function showLoading() {
-        document.getElementById("loading").style.display = "block";
-        document.getElementById("submitBtn").disabled = true;
-      }
-    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OntoGPT Studio · 知识抽取工作台</title>
+    <link rel="stylesheet" href="/static/app.css" />
   </head>
   <body>
-    <div>
-      <form method="post">
-        <h1>Information Extraction with SPIRES</h1>
-        <div>
-          Select Schema:
-          <select name="datamodel" id="datamodel">
-            {% for key, value in datamodels.items() %}
-            <option value="{{ key }}">{{ key }} - {{ value }}</option>
-            {% endfor %}
-          </select>
+    <header class="app-bar">
+      <div class="app-bar-inner">
+        <div class="brand">
+          <div class="logo-mark">OG</div>
+          <div class="brand-text">
+            <h1>OntoGPT Studio · 知识抽取工作台</h1>
+            <p>SPIRES 引擎 · LinkML 模式驱动 · OBO 本体对齐 · 多格式文档解析</p>
+          </div>
         </div>
-        <div>
-          Select LLM (ollama/ models require ollama to be running; API models require the matching provider key):
-          <select name="llm_model" id="llm_model">
-            {% for llm_model in llm_models %}
-            <option value="{{ llm_model }}">{{ llm_model }}</option>
-            {% endfor %}
-          </select>
+        <nav class="app-nav">
+          <a class="nav-pill is-active" href="/">🧩 抽取工作台</a>
+          <a class="nav-pill" href="/history">📚 任务历史与统计</a>
+          <a class="nav-pill" href="/explorer">🌐 Ontology Explorer</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="shell">
+      <div class="page-head">
+        <h2>结构化知识抽取与本体对齐</h2>
+        <p class="page-desc">
+          面向专业文档的信息抽取流水线：选定 LinkML 知识模板 → 载入待处理文本 → 并行调用大模型 →
+          产出可校验的结构化实体、OWL 公理与 YAML / JSON 数据。
+        </p>
+        <div class="steps">
+          <span class="step is-active"><span class="step-num">1</span> 配置模板与模型</span>
+          <span class="step"><span class="step-num">2</span> 输入或上传文档</span>
+          <span class="step"><span class="step-num">3</span> 执行并行抽取</span>
+          <span class="step"><span class="step-num">4</span> 查看结果与导出</span>
         </div>
-        <div>
-          <textarea name="text" rows="20" cols="80">
-Enter text here (e.g. PubMed abstract)
-            </textarea
-          >
-        </div>
-        <input
-          type="submit"
-          onclick="showLoading(); this.style.backgroundColor='#FFA500'; this.value='Processing...'; return true;"
-        />
-        <div class="loading" id="loading">
-          <img src="static/loading.gif" alt="Loading..." />
-        </div>
-        <div>GPT models use the OpenAI API and may incur costs.</div>
-        <div>
-          <i
-            >Please be patient, can take up to 10s, or longer if ontology
-            resources need to be retrieved and/or using large local models.</i
-          >
+      </div>
+
+      <form id="extractForm" enctype="multipart/form-data" onsubmit="event.preventDefault(); handleFormSubmit(); return false;">
+        <div class="workbench">
+          <!-- ============ 左栏：抽取参数配置 ============ -->
+          <section class="card">
+            <div class="card-head">
+              <div>
+                <h2>抽取参数配置</h2>
+                <p class="card-sub">决定抽取哪些实体、如何对齐本体、以及由哪个模型执行</p>
+              </div>
+            </div>
+
+            <!-- 分区 01 -->
+            <div class="section">
+              <div class="section-head">
+                <span class="section-num">01</span>
+                <div>
+                  <h3>知识模板与本体对齐</h3>
+                  <p class="section-desc">
+                    模板定义可抽取的实体类别及其挂载的 OBO 国际本体库；对齐策略决定中文实体是否映射为标准英文本体 ID。
+                  </p>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label-row">
+                  <label for="datamodel">抽取知识模板 (LinkML Schema)</label>
+                  <button
+                    type="button"
+                    class="chip chip-accent"
+                    onclick="openAutoSchemaModal()"
+                    title="让 AI 根据你的专业文档或关键词自动设计并编译专属 LinkML 模板"
+                  >
+                    <span>✨</span> AI 自进化新模板
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  id="schemaSearch"
+                  class="input input-sm"
+                  placeholder="支持中英文搜索 (如 药物, 疾病, 食谱, 基因...)"
+                  oninput="filterSchemas()"
+                />
+                <select name="datamodel" id="datamodel" class="select">
+                  {% for key, value in datamodels.items() %}
+                  <option value="{{ key }}" {% if key == 'drug' %}selected{% endif %}>{{ key }} — {{ value }}</option>
+                  {% endfor %}
+                </select>
+                <p class="field-hint">
+                  内置 60+ 领域模板，覆盖电力、临床、生物、生态、食品等场景；也可用 AI 自进化生成行业专属模板。
+                </p>
+              </div>
+
+              <div class="field">
+                <label for="lang_mode">中文环境与本体对齐策略</label>
+                <select name="lang_mode" id="lang_mode" class="select">
+                  <option value="zh_ground_en" selected>中英跨语言对齐 (中文文本 → 国际标准英文本体 ID)【推荐】</option>
+                  <option value="zh_native">纯中文抽取输出 (保留中文原词，适合中文词表与展示)</option>
+                  <option value="auto">原生默认模式 (English Prompt)</option>
+                </select>
+                <p class="field-hint">
+                  推荐项可将中文病历、规程与文献中的实体自动对齐到 MONDO / CHEBI / HP 等国际本体 ID。
+                </p>
+              </div>
+
+              <div class="field">
+                <span class="field-label">模板自进化与增量学习 (Dynamic Schema Evolution)</span>
+                <label class="check-row">
+                  <input type="checkbox" name="auto_evolve" id="auto_evolve" value="true" />
+                  <span>任务进行中动态捕获新特征，任务完成后自动进化并更新模板 Schema</span>
+                </label>
+                <p class="field-hint">
+                  开启后，引擎在抽取长文档切片时边进行边捕获未归类专有参数与指标，并在任务结束时自动提炼扩展模板字段，完成模式自进化。
+                </p>
+              </div>
+            </div>
+
+            <!-- 分区 02 -->
+            <div class="section">
+              <div class="section-head">
+                <span class="section-num">02</span>
+                <div>
+                  <h3>长文档分块与并发性能</h3>
+                  <p class="section-desc">
+                    控制超长文档的切分粒度与并行度。窗口越大、并发越高，整体耗时越短，但单次请求的 Token 占用也越高。
+                  </p>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="chunk_size">超长文档智能分块窗口 (Chunk Window)</label>
+                <select name="chunk_size" id="chunk_size" class="select" onchange="updateCharCount()">
+                  <option value="12000">12,000 字符/块（🚀 极大加速！适合几十万字大文档，大模型吞吐最高）</option>
+                  <option value="6000" selected>6,000 字符/块（⚡ 推荐加速！大幅减少调用轮数）</option>
+                  <option value="3000">3,000 字符/块（标准细粒度）</option>
+                  <option value="0">不分块（单次完整送入）</option>
+                </select>
+                <p class="field-hint">
+                  增大窗口可把 48 万字文档的请求轮数从上百年降到几十次，显著压缩端到端耗时。
+                </p>
+              </div>
+
+              <div class="field">
+                <label for="concurrency">并行加速并发度 (Parallel Workers)</label>
+                <select name="concurrency" id="concurrency" class="select">
+                  <option value="8" selected>8 线程并行（推荐！处理 48 万字超长文档速度提升 5~8 倍）</option>
+                  <option value="12">12 线程并发（适合高限额 API / DeepSeek / 商业接口极速处理）</option>
+                  <option value="4">4 线程并发（平衡型）</option>
+                  <option value="1">单线程串行（传统模式，逐块排队）</option>
+                </select>
+                <p class="field-hint">
+                  利用云端 API 的并发能力多块同时抽取，完成后自动按原文顺序合并知识图谱。
+                </p>
+              </div>
+
+              <div class="field">
+                <span class="field-label">本地响应缓存加速 (Cache Acceleration)</span>
+                <label class="check-row">
+                  <input type="checkbox" name="use_cache" id="use_cache" value="true" checked />
+                  <span>启用本地响应缓存（命中相同切片时 0.01 秒返回，显著节省 Token 开销）</span>
+                </label>
+                <div class="field-label-row" style="margin-top: 10px;">
+                  <span id="cacheStatText" class="field-hint is-flush">检测缓存中...</span>
+                  <button type="button" class="chip chip-danger" onclick="clearServerCache()">
+                    🗑 清空历史缓存
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 分区 03 -->
+            <div class="section">
+              <div class="section-head">
+                <span class="section-num">03</span>
+                <div>
+                  <h3>模型接入与接口凭证</h3>
+                  <p class="section-desc">
+                    选择内置预设或填入任意 OpenAI 协议兼容的模型与端点。凭证仅保存在浏览器本地，不会随任务外传。
+                  </p>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="llm_model">选择预设模型或自定义</label>
+                <select name="llm_model" id="llm_model" class="select" onchange="toggleCustomModel()">
+                  {% for llm_model in llm_models %}
+                  <option value="{{ llm_model }}">
+                    {% if llm_model == 'custom' %}★ 自定义模型名称 (推荐配合下方接口地址){% else %}{{ llm_model }}{% endif %}
+                  </option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="field" id="customModelGroup">
+                <label for="custom_model">自定义模型名称 (Model ID)</label>
+                <input
+                  type="text"
+                  name="custom_model"
+                  id="custom_model"
+                  class="input"
+                  placeholder="例如: deepseek-chat, qwen-plus, gpt-4o-mini"
+                />
+                <div class="chip-row">
+                  <span class="chip" onclick="setModel('deepseek-chat')">deepseek-chat</span>
+                  <span class="chip" onclick="setModel('qwen-plus')">qwen-plus</span>
+                  <span class="chip" onclick="setModel('gpt-4o-mini')">gpt-4o-mini</span>
+                  <span class="chip" onclick="setModel('Qwen/Qwen2.5-72B-Instruct')">Qwen2.5-72B</span>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="api_base">OpenAI 协议接口地址 (API Base URL，可选)</label>
+                <input
+                  type="text"
+                  name="api_base"
+                  id="api_base"
+                  class="input"
+                  placeholder="例如: https://api.deepseek.com/v1"
+                />
+                <div class="chip-row">
+                  <span class="chip" onclick="setApiBase('https://api.deepseek.com/v1')">DeepSeek</span>
+                  <span class="chip" onclick="setApiBase('https://dashscope.aliyuncs.com/compatible-mode/v1')">阿里百炼</span>
+                  <span class="chip" onclick="setApiBase('https://api.siliconflow.cn/v1')">硅基流动</span>
+                  <span class="chip" onclick="setApiBase('https://api.openai.com/v1')">OpenAI</span>
+                  <span class="chip" onclick="setApiBase('https://openrouter.ai/api/v1')">OpenRouter</span>
+                  <span class="chip" onclick="setApiBase('http://127.0.0.1:11434/v1')">本地 Ollama(v1)</span>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="api_key">API Key (可选)</label>
+                <input
+                  type="password"
+                  name="api_key"
+                  id="api_key"
+                  class="input"
+                  placeholder="sk-... (留空则读取系统环境变量)"
+                  autocomplete="off"
+                />
+                <p class="field-hint">凭证保存在浏览器本地，无需每次重复输入；留空时回退到服务端环境变量。</p>
+              </div>
+
+              <!-- Neo4j 知识图谱双向闭环配置 -->
+              <div class="field" style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border-color, #e2e8f0);">
+                <label style="display: flex; align-items: center; justify-content: space-between; cursor: pointer;">
+                  <span style="font-weight: 600; color: #0284c7;">⚡ Neo4j 图谱在环复用 (Graph-in-the-Loop)</span>
+                  <input type="checkbox" id="enable_neo4j_reuse" name="enable_neo4j_reuse" value="true" checked style="width: 16px; height: 16px; cursor: pointer;" />
+                </label>
+                <p class="field-hint" style="margin-top: 4px;">
+                  开启后，抽取引擎在递归解析实体前会优先检索 Neo4j 已有知识。命中已有实体时直接复用属性并跳过大模型调用，大幅降低 Token 消耗并杜绝同名重复。
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <!-- ============ 右栏：输入与执行 ============ -->
+          <section class="card">
+            <div class="card-head">
+              <div>
+                <h2>输入文本与文档</h2>
+                <p class="card-sub">上传文档自动解析为纯文本，解析结果可在下方二次编辑后再提交</p>
+              </div>
+              <div class="chip-row is-inline">
+                <span class="chip" onclick="loadSample('zh_power')">⚡ 电力示例：主变跳闸与缺陷报告</span>
+                <span class="chip" onclick="loadSample('zh_drug')">中文示例：药物机制</span>
+                <span class="chip" onclick="loadSample('zh_disease')">中文示例：罕见病表型</span>
+              </div>
+            </div>
+
+            <!-- 分区 01 -->
+            <div class="section">
+              <div class="section-head">
+                <span class="section-num">01</span>
+                <div>
+                  <h3>文档上传与自动解析</h3>
+                  <p class="section-desc">
+                    支持 PDF、Word、Excel、HTML 等格式，解析在本地服务完成，文本会直接写入下方编辑区。
+                  </p>
+                </div>
+              </div>
+
+              <div class="upload-status" id="uploadStatus">
+                <span id="uploadStatusText"></span>
+                <button type="button" class="chip chip-ok" onclick="clearUploadedFile()">清除文档</button>
+              </div>
+
+              <div class="dropzone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+                <div class="dropzone-icon">📄</div>
+                <div class="dropzone-title">点击选择文件，或拖拽文档到此处解析</div>
+                <div class="dropzone-desc">解析完成后可自由编辑，再提交抽取</div>
+                <div class="file-types">
+                  <span class="file-type">PDF</span>
+                  <span class="file-type">DOCX</span>
+                  <span class="file-type">TXT / MD</span>
+                  <span class="file-type">XLSX</span>
+                  <span class="file-type">HTML</span>
+                  <span class="file-type">JSON / CSV</span>
+                </div>
+                <input
+                  type="file"
+                  name="doc_file"
+                  id="fileInput"
+                  style="display: none;"
+                  onchange="handleFileUpload(this.files)"
+                  accept=".pdf,.docx,.txt,.md,.xlsx,.xls,.html,.htm,.json,.yaml,.yml,.csv"
+                />
+              </div>
+            </div>
+
+            <!-- 分区 02 -->
+            <div class="section">
+              <div class="section-head">
+                <span class="section-num">02</span>
+                <div>
+                  <h3>文本内容预览与编辑</h3>
+                  <p class="section-desc">
+                    提交前可对解析文本做补全、删改或格式微调；超出分块窗口的长文本会按配置自动切分后递归合并。
+                  </p>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label-row">
+                  <label for="text">待抽取文本</label>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <button
+                      type="button"
+                      id="restoreBtn"
+                      class="chip chip-ok"
+                      style="display: none;"
+                      onclick="restoreLastDocument()"
+                    >
+                      📄 恢复上次提取文档
+                    </button>
+                    <span id="charCount" class="field-hint is-flush">0 字符</span>
+                  </div>
+                </div>
+                <textarea
+                  name="text"
+                  id="text"
+                  class="textarea"
+                  oninput="updateCharCount()"
+                  placeholder="在此粘贴中文或英文文本，或通过上方上传文档自动填入..."
+                  required
+                >{% if initial_text %}{{ initial_text }}{% else %}卡维地洛（Carvedilol）是治疗高血压和慢性心力衰竭的常用药物，它通过非选择性阻断β肾上腺素能受体和选择性阻断α1肾上腺素能受体发挥扩张血管作用。{% endif %}</textarea>
+              </div>
+            </div>
+
+            <!-- 分区 03 -->
+            <div class="section">
+              <div class="section-head">
+                <span class="section-num">03</span>
+                <div>
+                  <h3>执行抽取任务</h3>
+                  <p class="section-desc">
+                    任务在后台并行执行，进度通过 SSE 实时回传；如遇模型异常或耗时过长，可随时中断。
+                  </p>
+                </div>
+              </div>
+
+              <button type="submit" class="btn btn-primary btn-lg btn-block" id="submitBtn">
+                开始 SPIRES 结构化抽取与本体对齐
+              </button>
+
+              <div class="progress-panel" id="progressCard">
+                <div class="progress-top">
+                  <div class="progress-label">
+                    <div class="spinner"></div>
+                    <span id="progressStatusText">任务运行中...</span>
+                  </div>
+                  <button type="button" class="btn btn-danger btn-sm" id="stopBtn" onclick="stopCurrentTask()">
+                    ⏹ 停止任务
+                  </button>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-fill" id="progressBar"></div>
+                </div>
+                <div class="progress-foot">
+                  <span id="progressMessage">正在初始化...</span>
+                  <span class="progress-pct" id="progressPercent">0%</span>
+                </div>
+              </div>
+
+              <div class="notice notice-info" style="margin-top: 16px;">
+                <span class="notice-title">提示</span>
+                文档解析在本地瞬间完成并展示在文本框中，你可以随时补充、删除或微调后再提交抽取。
+              </div>
+            </div>
+          </section>
         </div>
       </form>
-    </div>
-    <div class="footer">
+    </main>
+
+    <footer class="app-foot">
+      <div class="foot-row">
+        <span class="foot-tag">SPIRES Engine</span>
+        <span class="foot-tag">LinkML</span>
+        <span class="foot-tag">Ontology Access Kit</span>
+        <span class="foot-tag">FastAPI + SSE</span>
+      </div>
       <p>
-        Powered by
-        <a href="https://github.com/monarch-initiative/ontogpt">OntoGPT</a>
+        基于 <a href="https://github.com/monarch-initiative/ontogpt" target="_blank" rel="noopener">OntoGPT</a>
+        构建 · 本地化知识抽取与本体对齐工作台
       </p>
+    </footer>
+
+    <script>
+      const SAMPLES = {
+        zh_power: {
+          schema: "power_grid",
+          text: "【事故快报】2024年7月21日15时12分，500kV南昌变电站#2主变压器发生差动保护动作跳闸，联跳高压侧5021、中压侧2201断路器，重合闸闭锁。故障前负荷为450MW，三相故障电流峰值达24.8kA。故障后现场巡视发现：主变500kV侧B相高压套管根部有严重放电闪络烧蚀痕迹，瓷套开裂。随后的油色谱分析显示：油中溶解气体总烃浓度达850ppm，乙炔（C2H2）含量由停运前的0.5ppm骤升至18.6ppm，红外测温显示套管升高座处局部最高温度达115℃，介损tgδ测试值为1.25%（严重超标）。缺陷定级为危急缺陷。调度紧急进行倒闸操作，拉开5021-1、2201-1隔离开关将故障主变完全电气隔离，启动负荷转供方案。检修班组立即安排对B相套管进行更换并进行全套绝缘预防性试验。"
+        },
+        zh_drug: {
+          schema: "drug",
+          text: "卡维地洛（Carvedilol）是治疗高血压和慢性心力衰竭的常用药物，它通过非选择性阻断β肾上腺素能受体和选择性阻断α1肾上腺素能受体发挥扩张血管作用。"
+        },
+        zh_disease: {
+          schema: "mendelian_disease",
+          text: "马凡综合征（Marfan syndrome）是一种常染色体显性遗传性结缔组织疾病，由FBN1基因突变引起，主要临床表型包括身材高瘦、蜘蛛指（趾）、晶状体脱位以及主动脉根部扩张。"
+        },
+        zh_recipe: {
+          schema: "recipe",
+          text: "蒜香橄榄油意面（Spaghetti Aglio e Olio）：在盐水中煮熟400克意大利面；平底锅中加入60毫升特级初榨橄榄油，小火慢煎4瓣切片大蒜和少许红辣椒片，最后放入意面与切碎的欧芹翻炒均匀。"
+        }
+      };
+
+      function updateCharCount() {
+        const text = document.getElementById("text").value || "";
+        const chunkSize = parseInt(document.getElementById("chunk_size").value) || 0;
+        const countEl = document.getElementById("charCount");
+        if (chunkSize > 0 && text.length > chunkSize) {
+          const chunks = Math.ceil(text.length / chunkSize);
+          countEl.innerHTML = `<span style="color: #2563eb; font-weight: 600;">共 ${text.length} 字符 (长文档将自动分为 ${chunks} 个分块提取后递归合并)</span>`;
+        } else {
+          countEl.innerText = text.length + " 字符";
+        }
+      }
+
+      function toggleCustomModel() {
+        const select = document.getElementById("llm_model");
+        const group = document.getElementById("customModelGroup");
+        group.style.display = select.value === "custom" ? "block" : "none";
+      }
+
+      function setModel(modelName) {
+        document.getElementById("llm_model").value = "custom";
+        toggleCustomModel();
+        document.getElementById("custom_model").value = modelName;
+      }
+
+      function setApiBase(url) {
+        document.getElementById("api_base").value = url;
+      }
+
+      function loadSample(key) {
+        const item = SAMPLES[key];
+        if (!item) return;
+        const schemaSelect = document.getElementById("datamodel");
+        for (let i = 0; i < schemaSelect.options.length; i++) {
+          if (schemaSelect.options[i].value === item.schema) {
+            schemaSelect.selectedIndex = i;
+            break;
+          }
+        }
+        document.getElementById("text").value = item.text;
+        updateCharCount();
+      }
+
+      function filterSchemas() {
+        const q = document.getElementById("schemaSearch").value.toLowerCase();
+        const select = document.getElementById("datamodel");
+        for (let i = 0; i < select.options.length; i++) {
+          const txt = select.options[i].text.toLowerCase();
+          select.options[i].style.display = txt.includes(q) ? "" : "none";
+        }
+      }
+
+      // Drag & Drop Setup
+      const dropZone = document.getElementById("uploadZone");
+      ["dragenter", "dragover"].forEach((name) => {
+        dropZone.addEventListener(name, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropZone.classList.add("dragover");
+        });
+      });
+      ["dragleave", "drop"].forEach((name) => {
+        dropZone.addEventListener(name, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropZone.classList.remove("dragover");
+        });
+      });
+      dropZone.addEventListener("drop", (e) => {
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          handleFileUpload(e.dataTransfer.files);
+        }
+      });
+
+      async function handleFileUpload(files) {
+        if (!files || files.length === 0) return;
+        const file = files[0];
+
+        const statusBox = document.getElementById("uploadStatus");
+        const statusText = document.getElementById("uploadStatusText");
+        statusBox.style.display = "flex";
+        statusText.innerHTML = `正在解析文档 <strong>${file.name}</strong> (${(file.size / 1024).toFixed(1)} KB)...`;
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        try {
+          const res = await fetch("/api/parse-document", {
+            method: "POST",
+            body: formData
+          });
+          const data = await res.json();
+          if (data.success) {
+            document.getElementById("text").value = data.text;
+            updateCharCount();
+            try {
+              sessionStorage.setItem("ontogpt_last_document", data.text);
+            } catch (e) {}
+            statusText.innerHTML = `✅ 已成功从 <strong>${file.name}</strong> 中解析提取 <strong>${data.char_count}</strong> 字符！`;
+          } else {
+            statusText.innerHTML = `❌ ${data.error || "文档解析失败"}`;
+          }
+        } catch (err) {
+          statusText.innerHTML = `❌ 上传解析发生异常: ${err.message}`;
+        }
+      }
+
+      function clearUploadedFile() {
+        document.getElementById("fileInput").value = "";
+        document.getElementById("uploadStatus").style.display = "none";
+      }
+
+      let currentTaskId = null;
+      let eventSource = null;
+
+      function handleFormSubmit() {
+        try {
+          localStorage.setItem("ontogpt_llm_model", document.getElementById("llm_model").value);
+          localStorage.setItem("ontogpt_custom_model", document.getElementById("custom_model").value);
+          localStorage.setItem("ontogpt_api_base", document.getElementById("api_base").value);
+          localStorage.setItem("ontogpt_api_key", document.getElementById("api_key").value);
+          localStorage.setItem("ontogpt_datamodel", document.getElementById("datamodel").value);
+          localStorage.setItem("ontogpt_lang_mode", document.getElementById("lang_mode").value);
+          localStorage.setItem("ontogpt_auto_evolve", document.getElementById("auto_evolve").checked ? "true" : "false");
+        } catch (e) {}
+
+        const form = document.getElementById("extractForm");
+        const formData = new FormData(form);
+        try {
+          sessionStorage.setItem("ontogpt_last_document", document.getElementById("text").value);
+        } catch (e) {}
+
+        const btn = document.getElementById("submitBtn");
+        btn.disabled = true;
+        btn.innerText = "⏳ 抽取任务执行中...";
+
+        const progressCard = document.getElementById("progressCard");
+        progressCard.style.display = "block";
+        document.getElementById("progressBar").style.width = "5%";
+        document.getElementById("progressPercent").innerText = "5%";
+        document.getElementById("progressStatusText").innerText = "任务运行中...";
+        document.getElementById("progressMessage").innerText = "正在向后端派发提取任务...";
+        document.getElementById("stopBtn").disabled = false;
+        document.getElementById("stopBtn").innerText = "⏹ 停止任务";
+
+        fetch("/api/start-task", {
+          method: "POST",
+          body: formData
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (!data.success) {
+              alert("启动任务失败: " + (data.error || "未知原因"));
+              resetSubmitBtn();
+              return;
+            }
+            currentTaskId = data.task_id;
+            listenTaskProgress(currentTaskId);
+          })
+          .catch((err) => {
+            alert("请求异常: " + err.message);
+            resetSubmitBtn();
+          });
+
+        return false; // 拦截原生页面跳转，使用优雅的 SSE 实时监听
+      }
+
+      function listenTaskProgress(taskId) {
+        if (eventSource) {
+          eventSource.close();
+        }
+        eventSource = new EventSource(`/api/task-events/${taskId}`);
+
+        eventSource.onmessage = (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data.type === "ping") return;
+
+            if (data.percent !== undefined) {
+              document.getElementById("progressBar").style.width = data.percent + "%";
+              document.getElementById("progressPercent").innerText = data.percent + "%";
+            }
+            if (data.message) {
+              document.getElementById("progressMessage").innerText = data.message;
+            }
+
+            if (data.type === "completed") {
+              eventSource.close();
+              document.getElementById("progressBar").style.width = "100%";
+              document.getElementById("progressPercent").innerText = "100%";
+              document.getElementById("progressStatusText").innerText = "✅ 抽取完成，正在渲染结果...";
+              document.getElementById("progressMessage").innerText = "提取成功！正在跳转至结果看板...";
+              setTimeout(() => {
+                window.location.href = `/task/${taskId}`;
+              }, 400);
+            } else if (data.type === "stopped") {
+              eventSource.close();
+              document.getElementById("progressStatusText").innerText = "⏹ 任务已停止";
+              document.getElementById("progressMessage").innerText = data.message || "用户已手动停止任务。";
+              resetSubmitBtn();
+            } else if (data.type === "failed") {
+              eventSource.close();
+              document.getElementById("progressStatusText").innerText = "❌ 任务异常";
+              document.getElementById("progressMessage").innerText = data.error || "提取过程遇到错误";
+              resetSubmitBtn();
+            }
+          } catch (err) {
+            console.error("Parse event error", err);
+          }
+        };
+
+        eventSource.onerror = () => {
+          // 如果连接中断，兜底轮询
+          fetch(`/api/task-status/${taskId}`)
+            .then((r) => r.json())
+            .then((res) => {
+              if (res.status === "completed") {
+                window.location.href = `/task/${taskId}`;
+              }
+            });
+        };
+      }
+
+      function stopCurrentTask() {
+        if (!currentTaskId) return;
+        const stopBtn = document.getElementById("stopBtn");
+        stopBtn.disabled = true;
+        stopBtn.innerText = "⏳ 正在中断...";
+        document.getElementById("progressStatusText").innerText = "⏹ 任务已停止";
+        document.getElementById("progressMessage").innerText = "已向底层引擎下发中断信号，任务立即终止。";
+
+        fetch(`/api/stop-task/${currentTaskId}`, { method: "POST" })
+          .then((r) => r.json())
+          .then((res) => {
+            if (eventSource) {
+              eventSource.close();
+              eventSource = null;
+            }
+            resetSubmitBtn();
+          })
+          .catch((err) => {
+            console.error("Stop task error", err);
+            resetSubmitBtn();
+          });
+      }
+
+      function loadCacheInfo() {
+        fetch("/api/cache-info")
+          .then((r) => r.json())
+          .then((data) => {
+            const statElem = document.getElementById("cacheStatText");
+            if (statElem) {
+              statElem.innerText = `已缓存 ${data.count} 条历史响应 (${data.size_mb} MB)`;
+            }
+          })
+          .catch(() => {});
+      }
+
+      function clearServerCache() {
+        if (!confirm("确定要清空本地全部历史 AI 请求缓存吗？清空后下次将重新向大模型发起完整请求。")) return;
+        fetch("/api/clear-cache", { method: "POST" })
+          .then((r) => r.json())
+          .then((data) => {
+            alert(data.message || "缓存已清空");
+            loadCacheInfo();
+          })
+          .catch((err) => {
+            alert("清空失败: " + err.message);
+          });
+      }
+
+      function resetSubmitBtn() {
+        const btn = document.getElementById("submitBtn");
+        btn.disabled = false;
+        btn.innerText = "开始 SPIRES 结构化抽取与本体对齐";
+      }
+
+      function restoreLastDocument() {
+        try {
+          const doc = sessionStorage.getItem("ontogpt_last_document");
+          if (doc) {
+            document.getElementById("text").value = doc;
+            updateCharCount();
+            document.getElementById("restoreBtn").style.display = "none";
+          }
+        } catch (e) {}
+      }
+
+      function openAutoSchemaModal() {
+        document.getElementById("autoSchemaModal").style.display = "flex";
+        document.getElementById("autoSchemaStatus").style.display = "none";
+        const mainText = document.getElementById("text").value.trim();
+        if (mainText && !document.getElementById("autoSchemaSampleText").value) {
+          document.getElementById("autoSchemaSampleText").value = mainText.slice(0, 1500);
+        }
+      }
+
+      function closeAutoSchemaModal() {
+        document.getElementById("autoSchemaModal").style.display = "none";
+      }
+
+      function fillModalWithCurrentText() {
+        const mainText = document.getElementById("text").value.trim();
+        if (mainText) {
+          document.getElementById("autoSchemaSampleText").value = mainText.slice(0, 2000);
+        } else {
+          alert("主界面文本框为空，请先粘贴或上传文档！");
+        }
+      }
+
+      function runAutoSchemaGeneration() {
+        const domainHint = document.getElementById("autoSchemaDomainHint").value.trim();
+        const schemaId = document.getElementById("autoSchemaId").value.trim();
+        const sampleText = document.getElementById("autoSchemaSampleText").value.trim() || document.getElementById("text").value.trim();
+
+        if (!domainHint && !sampleText) {
+          alert("请至少提供【领域名称】或【样例参考文本】！");
+          return;
+        }
+
+        const btn = document.getElementById("btnRunAutoSchema");
+        btn.disabled = true;
+        btn.innerText = "⏳ AI 正在架构本体模型并编译...";
+
+        const statusBox = document.getElementById("autoSchemaStatus");
+        statusBox.style.display = "block";
+        statusBox.style.background = "#eff6ff";
+        statusBox.style.border = "1px solid #bfdbfe";
+        statusBox.style.color = "#1e40af";
+        statusBox.innerHTML = "正在向大模型派发本体架构设计任务并进行 Pydantic 动态编译，请稍候约 10~20 秒...";
+
+        const formData = new FormData();
+        formData.append("domain_hint", domainHint);
+        formData.append("schema_id", schemaId);
+        formData.append("text", sampleText);
+        formData.append("llm_model", document.getElementById("llm_model").value);
+        formData.append("custom_model", document.getElementById("custom_model").value);
+        formData.append("api_base", document.getElementById("api_base").value);
+        formData.append("api_key", document.getElementById("api_key").value);
+
+        fetch("/api/auto-generate-schema", {
+          method: "POST",
+          body: formData,
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            btn.disabled = false;
+            btn.innerText = "🚀 启动 AI 自动设计与编译";
+
+            if (data.success) {
+              statusBox.style.background = "#f0fdf4";
+              statusBox.style.border = "1px solid #bbf7d0";
+              statusBox.style.color = "#166534";
+              statusBox.innerHTML = `✅ <b>${data.message}</b><br/><span style="font-size: 12px; color: #475569;">包含概念类: ${data.classes.join(", ")}</span>`;
+
+              const select = document.getElementById("datamodel");
+              const newOption = document.createElement("option");
+              newOption.value = data.schema_id;
+              newOption.innerText = `✨ 【自进化】${data.schema_id} — ${data.title || "自定义领域"}`;
+              newOption.selected = true;
+              select.prepend(newOption);
+
+              setTimeout(() => {
+                closeAutoSchemaModal();
+                alert(`✨ 模板 [${data.schema_id}] 已经自进化生成并自动选中！你现在可以直接点击【开始抽取】进行信息提取。`);
+              }, 1200);
+            } else {
+              statusBox.style.background = "#fef2f2";
+              statusBox.style.border = "1px solid #fecaca";
+              statusBox.style.color = "#991b1b";
+              statusBox.innerHTML = `❌ ${data.error || "生成失败"}`;
+            }
+          })
+          .catch((err) => {
+            btn.disabled = false;
+            btn.innerText = "🚀 启动 AI 自动设计与编译";
+            statusBox.style.background = "#fef2f2";
+            statusBox.style.border = "1px solid #fecaca";
+            statusBox.style.color = "#991b1b";
+            statusBox.innerHTML = `❌ 请求异常: ${err.message}`;
+          });
+      }
+
+      window.addEventListener("DOMContentLoaded", () => {
+        try {
+          const savedModel = localStorage.getItem("ontogpt_llm_model");
+          const savedCustomModel = localStorage.getItem("ontogpt_custom_model");
+          const savedApiBase = localStorage.getItem("ontogpt_api_base");
+          const savedApiKey = localStorage.getItem("ontogpt_api_key");
+          const savedDatamodel = localStorage.getItem("ontogpt_datamodel");
+          const savedLangMode = localStorage.getItem("ontogpt_lang_mode");
+          const savedAutoEvolve = localStorage.getItem("ontogpt_auto_evolve");
+
+          if (savedModel) document.getElementById("llm_model").value = savedModel;
+          if (savedCustomModel) document.getElementById("custom_model").value = savedCustomModel;
+          if (savedApiBase) document.getElementById("api_base").value = savedApiBase;
+          if (savedApiKey) document.getElementById("api_key").value = savedApiKey;
+          if (savedDatamodel) document.getElementById("datamodel").value = savedDatamodel;
+          if (savedLangMode) document.getElementById("lang_mode").value = savedLangMode;
+          if (savedAutoEvolve !== null) document.getElementById("auto_evolve").checked = (savedAutoEvolve === "true");
+
+          {% if selected_datamodel %}
+          document.getElementById("datamodel").value = "{{ selected_datamodel }}";
+          {% endif %}
+          {% if selected_model %}
+          document.getElementById("llm_model").value = "{{ selected_model }}";
+          {% endif %}
+
+          // 自动检测是否有上一次提取保留的长文档草稿
+          const lastDoc = sessionStorage.getItem("ontogpt_last_document");
+          const currentVal = document.getElementById("text").value.trim();
+          if (lastDoc && lastDoc !== currentVal && currentVal.length < 500) {
+            document.getElementById("restoreBtn").style.display = "inline-block";
+          }
+        } catch (e) {}
+        toggleCustomModel();
+        updateCharCount();
+        loadCacheInfo();
+      });
+    </script>
+
+    <!-- AI 自进化模板生成弹窗 -->
+    <div id="autoSchemaModal" class="modal-backdrop" style="display: none;">
+      <div class="modal">
+        <div class="modal-head">
+          <div>
+            <h3>✨ AI 自动设计与自进化本体模板</h3>
+            <p>由大模型依据行业文本生成 LinkML 模式，并即时编译为运行时类</p>
+          </div>
+          <button type="button" class="modal-close" onclick="closeAutoSchemaModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="notice notice-info" style="margin-bottom: 18px;">
+            无需手写 YAML。大模型将研读你的行业文本，自主识别实体层级、逻辑关系与量测参数，并
+            <strong>直接在后端编译为原生 LinkML 运行时类</strong>供本次抽取使用。
+          </div>
+
+          <div class="field">
+            <label for="autoSchemaDomainHint">1. 领域名称或专业主题 <span class="req">*</span></label>
+            <input
+              type="text"
+              id="autoSchemaDomainHint"
+              class="input"
+              placeholder="例如: 水电站水轮机检修 / 航空发动机叶片探伤 / 新能源储能电站调度"
+            />
+            <p class="field-hint">描述越具体，生成的概念层级与槽位越贴合你的业务口径。</p>
+          </div>
+
+          <div class="field">
+            <label for="autoSchemaId">2. 模板标识符 (英文短名称，留空将由 AI 自动命名)</label>
+            <input
+              type="text"
+              id="autoSchemaId"
+              class="input"
+              placeholder="例如: hydro_turbine / aviation_blade / battery_storage"
+            />
+            <p class="field-hint">作为模板在模板列表中的唯一 key，建议使用小写下划线命名。</p>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="autoSchemaSampleText">3. 领域样例参考文本 (可选)</label>
+              <button type="button" class="chip" onclick="fillModalWithCurrentText()">
+                📋 导入主界面当前文本
+              </button>
+            </div>
+            <textarea
+              id="autoSchemaSampleText"
+              class="textarea"
+              rows="5"
+              style="min-height: 130px; font-size: 13px;"
+              placeholder="在此粘贴该行业特有的 1~2 段典型规程、参数或报告文本，AI 将深入提炼其中的专有概念与槽位..."
+            ></textarea>
+          </div>
+
+          <div id="autoSchemaStatus" class="notice" style="display: none; margin-top: 14px;"></div>
+        </div>
+        <div class="modal-foot">
+          <button type="button" class="btn btn-ghost" onclick="closeAutoSchemaModal()">取消</button>
+          <button type="button" class="btn btn-primary" id="btnRunAutoSchema" onclick="runAutoSchemaGeneration()">
+            🚀 启动 AI 自动设计与编译
+          </button>
+        </div>
+      </div>
     </div>
   </body>
 </html>

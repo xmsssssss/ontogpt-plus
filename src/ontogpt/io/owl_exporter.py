@@ -23,47 +23,37 @@ class OWLExporter(Exporter):
         schemaview: SchemaView,
         id_value=None,
     ):
+        should_close = False
         if isinstance(output, Path):
             output = open(str(output), "w", encoding="utf-8")
-        if isinstance(output, str):
+            should_close = True
+        elif isinstance(output, str):
             output = StringIO(output)
-        dumper = OWLDumper()
-        element = extraction_output.extracted_object
-        cls_name = type(element).__name__
-        id_slot = schemaview.get_identifier_slot(cls_name)
-        if id_slot is not None:
-            id_slot_name = id_slot.name
-            if id_value is not None:
-                setattr(element, id_slot_name, "AUTO:_ROOT")
-            else:
-                id_value = getattr(element, id_slot_name, None)
-                print(f"Setting {id_slot_name} [{id_value}] to AUTO:_ROOT for {cls_name}")
-                if id_value is None:
-                    setattr(element, id_slot_name, "AUTO:_ROOT")
-        axioms = []
-        if extraction_output.named_entities is not None:
-            for named_entity in extraction_output.named_entities:
-                ne_as_dc = self._as_dataclass_object(named_entity, schemaview)
-                doc = dumper.to_ontology_document(ne_as_dc, schemaview.schema)
-                # Newer pyhornedowl returns a PyIndexedOntology directly from
-                # to_ontology_document(); older versions wrap it in `.ontology`.
+
+        from ontogpt.io.owl_builder import OWL2Builder
+
+        schema_name = getattr(schemaview.schema, "name", None) or "knowledge_ontology"
+        builder = OWL2Builder(schemaview=schemaview, schema_id=schema_name)
+        g = builder.build_from_extraction(extraction_output, id_value=id_value)
+
+        # 尝试补充 linkml_owl 的扩展公理（如有）
+        if extraction_output.extracted_object:
+            try:
+                dumper = OWLDumper()
+                element = extraction_output.extracted_output if hasattr(extraction_output, "extracted_output") else extraction_output.extracted_object
+                element_as_dc = self._as_dataclass_object(element, schemaview)
+                doc = dumper.to_ontology_document(element_as_dc, schemaview.schema)
                 ont = getattr(doc, "ontology", doc)
-                if hasattr(ont, "axioms"):
-                    axioms.extend(ont.axioms)
-                else:
-                    axioms.extend(ont.get_axioms())
-        element_as_dataclass = self._as_dataclass_object(element, schemaview)
-        doc = dumper.to_ontology_document(element_as_dataclass, schemaview.schema)
-        ont = getattr(doc, "ontology", doc)
-        if hasattr(ont, "axioms"):
-            ont.axioms.extend(axioms)
-            output.write(str(doc))  # type: ignore
-        else:
-            # PyIndexedOntology.get_axioms() yields AnnotatedComponent wrappers
-            # that add_axiom() won't accept, so unwrap to the inner component.
-            for ax in axioms:
-                ont.add_axiom(getattr(ax, "component", ax))
-            output.write(ont.save_to_string("owl"))  # type: ignore
+                extra_axioms_xml = ont.save_to_string("owl") if hasattr(ont, "save_to_string") else str(doc)
+                if extra_axioms_xml and ("<owl:Class" in extra_axioms_xml or "<owl:Axiom" in extra_axioms_xml):
+                    g.parse(data=extra_axioms_xml, format="xml")
+            except Exception:
+                pass
+
+        xml_str = g.serialize(format="pretty-xml", encoding="utf-8").decode("utf-8")
+        output.write(xml_str)
+        if should_close:
+            output.close()
 
     def _as_dataclass_object(self, element: pydantic.BaseModel, schemaview: SchemaView):
         cls_name = type(element).__name__

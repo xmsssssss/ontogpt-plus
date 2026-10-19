@@ -1,0 +1,175 @@
+id: https://w3id.org/ontogpt/power_grid
+name: power_grid
+title: Power Grid System, Equipment and Fault Analysis Template
+description: 电力系统设备台账、运行拓扑、继电保护动作、电网故障缺陷、自适应状态参量与检修处置抽取模板
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  cim: http://iec.ch/TC57/CIM#
+  power: http://example.org/power/
+  AUTO: http://example.org/auto/
+default_prefix: power
+default_range: string
+
+imports:
+  - linkml:types
+  - core
+
+enums:
+  VoltageLevelEnum:
+    description: 标称电压等级
+    permissible_values:
+      AC_1000kV: 特高压交流1000kV
+      AC_750kV: 超高压交流750kV
+      AC_500kV: 超高压交流500kV
+      AC_330kV: 交流330kV
+      AC_220kV: 高压交流220kV
+      AC_110kV: 高压交流110kV
+      AC_35kV: 中压交流35kV
+      AC_10kV: 中压配电10kV
+      AC_0.4kV: 低压配电0.4kV
+      DC_800kV: 特高压直流±800kV
+      DC_500kV: 直流±500kV
+
+  DefectSeverityEnum:
+    description: 缺陷严重程度级别（国网标准）
+    permissible_values:
+      Critical: 危急缺陷
+      Serious: 严重缺陷
+      General: 一般缺陷
+      Normal: 正常工况
+
+classes:
+  PowerGridAnalysisReport:
+    tree_root: true
+    description: 电力事故跳闸分析、变电站缺陷巡检、试验报告或调度运行记录
+    attributes:
+      id:
+        identifier: true
+        description: 报告或事故唯一标识编号
+        ifabsent: "string(AUTO:_ROOT)"
+        annotations:
+          prompt.skip: true
+      event_title:
+        description: 事故或报告简要标题
+        annotations:
+          owl: AnnotationProperty, AnnotationAssertion
+      occurrence_time:
+        description: 故障发生或缺陷发现时间
+      location:
+        description: 涉及的变电站、开关站、换流站或线路区段（如 500kV南昌变电站、220kV赣昌线）
+        annotations:
+          owl: AnnotationProperty, AnnotationAssertion
+      voltage_level:
+        description: 电压等级
+        range: VoltageLevelEnum
+      grid_topology_info:
+        description: 电网运行方式与一次拓扑接线形式（如 双母线、内桥接线、3/2断路器接线）
+      primary_equipment:
+        description: 涉及的变压器、断路器、GIS、隔离开关、避雷器、互感器、电缆等一次设备列表
+        multivalued: true
+        range: PrimaryEquipment
+        annotations:
+          owl: ObjectProperty, ObjectSomeValuesFrom
+      secondary_system:
+        description: 涉及的继电保护装置、测控装置、安全自动装置或智能终端列表
+        multivalued: true
+        range: SecondarySystem
+        annotations:
+          owl: ObjectProperty, ObjectSomeValuesFrom
+      fault_incident:
+        description: 故障缺陷详情、相别、诱因及严重程度
+        range: FaultIncidentDetail
+        annotations:
+          owl: ObjectProperty, ObjectSomeValuesFrom
+      relay_protection_actions:
+        description: 继电保护与安全自动装置动作行为（如 比率差动速断动作、零序保护跳闸、自动重合闸动作）
+        multivalued: true
+        range: ProtectionAction
+        annotations:
+          owl: ObjectProperty, ObjectSomeValuesFrom
+      measurements_and_indicators:
+        description: 关键量测数据与试验指标（如 故障电流峰值、SF6微水、油中溶解气体组分DGA、红外温差等）
+        multivalued: true
+        range: MeasurementItem
+        annotations:
+          owl: ObjectProperty, ObjectSomeValuesFrom
+      auto_discovered_features:
+        description: 从文档中自适应提取的特有专业特征、工况参数或行业规程专有属性
+        multivalued: true
+        range: KeyValuePair
+        annotations:
+          owl: ObjectProperty, ObjectSomeValuesFrom
+      dispatch_and_switching_ops:
+        description: 调度处置及倒闸操作步骤（如 隔离故障间隔、转移负荷、拉开刀闸、挂接地线）
+        multivalued: true
+        range: string
+      maintenance_actions:
+        description: 现场检修处理措施与整改建议（如 绝缘子清扫、线夹紧固、更换套管、油滤过滤）
+        multivalued: true
+        range: string
+
+  PrimaryEquipment:
+    is_a: CompoundExpression
+    description: 一次设备实体
+    attributes:
+      name:
+        description: 设备全称与调度编号（如 #1主变压器、2011断路器）
+      equipment_category:
+        description: 设备专业分类（如 变压器, 断路器, 隔离开关, GIS, 避雷器, 电流互感器, 电压互感器, 电抗器, 输电线路, 电力电缆）
+      bay_name:
+        description: 所在间隔名称
+      component_involved:
+        description: 具体故障或异动部件（如 高压侧A相套管、分接开关、本体灭弧室、机构箱）
+
+  SecondarySystem:
+    is_a: CompoundExpression
+    description: 二次系统与继电保护实体
+    attributes:
+      device_name:
+        description: 保护或自动化装置名称及型号（如 RCS-978变压器差动保护装置、CSC-103线路保护）
+      device_type:
+        description: 二次设备类型（如 主保护, 后备保护, 备自投装置, 故障录波器, 测控单元）
+
+  FaultIncidentDetail:
+    is_a: CompoundExpression
+    description: 故障缺陷详情
+    attributes:
+      defect_severity:
+        description: 缺陷严重程度
+        range: DefectSeverityEnum
+      fault_phase:
+        description: 故障相别与性质（如 A相单相接地、AB相短路、三相短路）
+      fault_phenomenon:
+        description: 现场直观表现或告警信号（如 瓦斯保护动作告警、放电火花、接头发热变色、机构拒动）
+      root_cause:
+        description: 根因分析（如 雷击过电压导致绝缘闪络、鸟害、受潮老化、机械卡涩）
+
+  ProtectionAction:
+    is_a: CompoundExpression
+    description: 继电保护与安全自动装置动作逻辑
+    attributes:
+      protection_name:
+        description: 动作的具体保护功能段（如 光纤电流差动保护、高频距离Ⅰ段、过流延时保护、低频减载）
+      trip_breaker:
+        description: 联跳的断路器编号（如 跳开5011、5012断路器）
+      reclose_result:
+        description: 重合闸动作情况（如 重合成功、重合不成功后加速跳闸、保护闭锁重合闸）
+
+  MeasurementItem:
+    is_a: CompoundExpression
+    description: 电气量测与状态监测数值
+    attributes:
+      parameter_name:
+        description: 物理量或监测参数名称（如 故障相电流、总烃含量、乙炔C2H2、SF6微水、油温、接地电阻）
+      value_with_unit:
+        description: 测量数值及单位（如 18.5kA, 120ppm, 0.45MPa, 78℃, 0.35Ω）
+
+  KeyValuePair:
+    is_a: CompoundExpression
+    description: 自适应发现的专有属性键值对
+    attributes:
+      key:
+        description: 专有属性名（如 环境温度、套管介损tgδ、局部放电量、继电器动作毫秒时间）
+      value:
+        description: 属性值与具体描述

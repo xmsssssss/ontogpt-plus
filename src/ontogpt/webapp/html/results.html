@@ -1,32 +1,217 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <title>SPIRES: Results</title>
-    <style>
-      body {
-        font-family: Arial, sans-serif;
-        margin: 0;
-        padding: 0;
-      }
-
-      .container {
-        max-width: 800px;
-        margin: 0 auto;
-        padding: 20px;
-      }
-
-      .container a {
-        color: #007bff;
-        text-decoration: none;
-      }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OntoGPT Studio · 抽取结果</title>
+    <link rel="stylesheet" href="/static/app.css" />
   </head>
   <body>
-    <div class="container">
-      <a href="/">Try another!</a>
-    </div>
+    <header class="app-bar">
+      <div class="app-bar-inner">
+        <div class="brand">
+          <div class="logo-mark">OG</div>
+          <div class="brand-text">
+            <h1>OntoGPT Studio · 抽取结果</h1>
+            <p>结构化实体 · 本体对齐校验 · OWL 公理 · YAML / JSON 导出</p>
+          </div>
+        </div>
+        <nav class="app-nav">
+          <a class="nav-pill" href="/">🧩 抽取工作台</a>
+          <a class="nav-pill" href="/history">📚 任务历史与统计</a>
+          <a class="nav-pill" href="/explorer">🌐 Ontology Explorer</a>
+          {% if task_id %}
+          <a class="nav-pill is-solid" href="/?task_id={{ task_id }}">🔁 携带本文档重新提取</a>
+          {% endif %}
+        </nav>
+      </div>
+    </header>
 
-    {{ inner_html|safe }}
+    <main class="shell">
+      <div class="page-head">
+        <h2>本次抽取结果</h2>
+        <p class="page-desc">
+          结果分为四个视图：可视化实体与对齐校验、OWL 本体公理、YAML 结构化数据、JSON 原始数据。
+          所有视图均来自同一次抽取，可直接复制或下载用于下游系统。
+        </p>
+        <div class="steps">
+          <span class="step"><span class="step-num">1</span> 配置模板与模型</span>
+          <span class="step"><span class="step-num">2</span> 输入或上传文档</span>
+          <span class="step"><span class="step-num">3</span> 执行并行抽取</span>
+          <span class="step is-active"><span class="step-num">4</span> 查看结果与导出</span>
+        </div>
+      </div>
+
+      {% if error_message %}
+      <div class="notice notice-err" style="margin-bottom: 20px;">
+        <span class="notice-title">提取过程发生错误</span>
+        {{ error_message }}
+      </div>
+      {% endif %}
+
+      <div class="summary-grid">
+        <div class="summary-item">
+          <div class="summary-label">知识模板</div>
+          <div class="summary-value">{{ datamodel }}</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-label">执行模型</div>
+          <div class="summary-value">{{ llm_model }}</div>
+        </div>
+        {% if api_base %}
+        <div class="summary-item">
+          <div class="summary-label">协议端点</div>
+          <div class="summary-value">{{ api_base }}</div>
+        </div>
+        {% endif %}
+        {% if task_id %}
+        <div class="summary-item">
+          <div class="summary-label">任务 ID</div>
+          <div class="summary-value">{{ task_id[:20] }}{% if task_id|length > 20 %}...{% endif %}</div>
+        </div>
+        {% endif %}
+      </div>
+
+      {% if evolved_info and evolved_info.get('evolved') %}
+      <div class="notice notice-ok" style="margin-bottom: 20px;">
+        <span class="notice-title">✨ 知识模板已完成自进化增量更新 (Schema Evolved)</span>
+        系统已根据本次抽取任务中捕获的动态特征，自动扩展并重新编译了 <strong>{{ datamodel }}</strong> 模板！新增特征已沉淀为规范的本体槽位，后续任务将直接以一级字段抽取。
+        {% if evolved_info.get('classes') %}
+        <div style="margin-top: 6px; font-size: 12px; color: var(--ink-700);">
+          当前模式概念类: {{ evolved_info.get('classes')|join(', ') }}
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('report')">可视化实体与对齐校验</button>
+        <button class="tab-btn" onclick="switchTab('owl')">OWL 知识本体公理</button>
+        <button class="tab-btn" onclick="switchTab('yaml')">YAML 结构化数据</button>
+        <button class="tab-btn" onclick="switchTab('json')">JSON 数据</button>
+      </div>
+
+      <!-- 视图 1：可视化报告 -->
+      <section id="tab-report" class="tab-content active">
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>实体与本体对齐校验</h2>
+              <p class="card-sub">
+                按模板的实体类分组展示抽取结果，并标注每个实体对齐到的本体 ID 与对齐状态，便于人工复核。
+              </p>
+            </div>
+          </div>
+          <div class="html-report">
+            {{ inner_html|safe }}
+          </div>
+        </div>
+      </section>
+
+      <!-- 视图 2：OWL -->
+      <section id="tab-owl" class="tab-content">
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>OWL 知识本体公理</h2>
+              <p class="card-sub">
+                由抽取结果映射生成的 OWL 公理集合，可导入 Protégé 等本体工具做进一步推理与校验。
+              </p>
+            </div>
+          </div>
+          <div class="toolbar-row">
+            <button class="btn btn-ghost btn-sm" onclick="copyText('owlContent')">复制 OWL 内容</button>
+            <button class="btn btn-ghost btn-sm" onclick="downloadFile('owlContent', 'extraction_result.owl')">
+              下载 .owl 文件
+            </button>
+          </div>
+          <pre class="code-block"><code id="owlContent">{% if owl_output %}{{ owl_output }}{% else %}# 当前模型或提取结果暂未生成 OWL 公理数据{% endif %}</code></pre>
+        </div>
+      </section>
+
+      <!-- 视图 3：YAML -->
+      <section id="tab-yaml" class="tab-content">
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>YAML 结构化数据</h2>
+              <p class="card-sub">
+                LinkML 数据实例的 YAML 序列化结果，字段名与所选模板严格一致，适合纳入版本管理。
+              </p>
+            </div>
+          </div>
+          <div class="toolbar-row">
+            <button class="btn btn-ghost btn-sm" onclick="copyText('yamlContent')">复制 YAML</button>
+            <button class="btn btn-ghost btn-sm" onclick="downloadFile('yamlContent', 'extraction_result.yaml')">
+              下载 .yaml
+            </button>
+          </div>
+          <pre class="code-block"><code id="yamlContent">{{ yaml_output }}</code></pre>
+        </div>
+      </section>
+
+      <!-- 视图 4：JSON -->
+      <section id="tab-json" class="tab-content">
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>JSON 数据</h2>
+              <p class="card-sub">
+                与 YAML 等价的 JSON 表示，可直接被应用程序、数据库或接口消费。
+              </p>
+            </div>
+          </div>
+          <div class="toolbar-row">
+            <button class="btn btn-ghost btn-sm" onclick="copyText('jsonContent')">复制 JSON</button>
+            <button class="btn btn-ghost btn-sm" onclick="downloadFile('jsonContent', 'extraction_result.json')">
+              下载 .json
+            </button>
+          </div>
+          <pre class="code-block"><code id="jsonContent">{{ json_output }}</code></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-foot">
+      <div class="foot-row">
+        <span class="foot-tag">SPIRES Engine</span>
+        <span class="foot-tag">LinkML</span>
+        <span class="foot-tag">OWL / RDF</span>
+      </div>
+      <p>
+        基于 <a href="https://github.com/monarch-initiative/ontogpt" target="_blank" rel="noopener">OntoGPT</a>
+        构建 · 本地化知识抽取与本体对齐工作台
+      </p>
+    </footer>
+
+    <script>
+      function switchTab(tabName) {
+        document.querySelectorAll(".tab-btn").forEach((btn) => btn.classList.remove("active"));
+        document.querySelectorAll(".tab-content").forEach((c) => c.classList.remove("active"));
+
+        event.target.classList.add("active");
+        document.getElementById("tab-" + tabName).classList.add("active");
+      }
+
+      function copyText(elemId) {
+        const text = document.getElementById(elemId).innerText;
+        navigator.clipboard.writeText(text).then(() => {
+          alert("已成功复制到剪贴板！");
+        });
+      }
+
+      function downloadFile(elemId, filename) {
+        const text = document.getElementById(elemId).innerText;
+        const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    </script>
   </body>
 </html>

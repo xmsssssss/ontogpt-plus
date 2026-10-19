@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ontology Explorer · 知识本体与语义图谱工作台</title>
+    <link rel="stylesheet" href="/static/app.css" />
+    <!-- 引入专业可视化库 vis-network -->
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+      .explorer-container {
+        display: grid;
+        grid-template-columns: 340px 1fr 380px;
+        gap: 16px;
+        height: calc(100vh - 120px);
+        min-height: 650px;
+      }
+      @media (max-width: 1280px) {
+        .explorer-container {
+          grid-template-columns: 300px 1fr;
+        }
+        .inspector-panel {
+          grid-column: 1 / -1;
+          height: 350px;
+        }
+      }
+      .panel-box {
+        background: var(--bg-surface, #ffffff);
+        border: 1px solid var(--border-color, #e2e8f0);
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      }
+      .panel-header {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border-color, #e2e8f0);
+        background: var(--bg-subtle, #f8fafc);
+        font-weight: 600;
+        font-size: 14px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .tree-nav {
+        padding: 8px;
+        overflow-y: auto;
+        flex: 1;
+      }
+      .tree-group-title {
+        font-size: 11px;
+        text-transform: uppercase;
+        color: #64748b;
+        font-weight: 700;
+        padding: 8px 8px 4px;
+        letter-spacing: 0.5px;
+      }
+      .tree-item {
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-size: 13px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 2px;
+        transition: all 0.15s;
+        color: #334155;
+      }
+      .tree-item:hover {
+        background: #f1f5f9;
+        color: #0f172a;
+      }
+      .tree-item.is-selected {
+        background: #e0e7ff;
+        color: #4338ca;
+        font-weight: 600;
+      }
+      .tree-badge {
+        font-size: 11px;
+        padding: 2px 6px;
+        background: #e2e8f0;
+        border-radius: 12px;
+        color: #475569;
+      }
+      .graph-viewport {
+        flex: 1;
+        position: relative;
+        background: #fbfcfe;
+        overflow: hidden;
+      }
+      #networkCanvas {
+        width: 100%;
+        height: 100%;
+      }
+      .graph-toolbar {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        z-index: 10;
+        background: rgba(255, 255, 255, 0.95);
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .inspector-body {
+        padding: 16px;
+        overflow-y: auto;
+        flex: 1;
+        font-size: 13px;
+      }
+      .prop-row {
+        margin-bottom: 12px;
+        border-bottom: 1px dashed #f1f5f9;
+        padding-bottom: 8px;
+      }
+      .prop-name {
+        font-weight: 600;
+        color: #475569;
+        font-size: 12px;
+        margin-bottom: 4px;
+      }
+      .prop-val {
+        color: #0f172a;
+        word-break: break-all;
+      }
+      .char-tag {
+        display: inline-block;
+        font-size: 11px;
+        padding: 2px 6px;
+        background: #fef3c7;
+        color: #b45309;
+        border-radius: 4px;
+        margin-right: 4px;
+        margin-top: 2px;
+        font-weight: 600;
+      }
+      .search-input {
+        width: 100%;
+        padding: 6px 10px;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        font-size: 12px;
+        margin-bottom: 8px;
+        box-sizing: border-box;
+      }
+      .tab-switch {
+        display: flex;
+        gap: 4px;
+        padding: 4px;
+        background: #f1f5f9;
+        border-radius: 6px;
+        margin: 8px;
+      }
+      .tab-switch-btn {
+        flex: 1;
+        padding: 4px 8px;
+        font-size: 12px;
+        text-align: center;
+        border: none;
+        background: transparent;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: 500;
+        color: #64748b;
+      }
+      .tab-switch-btn.active {
+        background: #ffffff;
+        color: #0f172a;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="app-bar">
+      <div class="app-bar-inner">
+        <div class="brand">
+          <div class="logo-mark">OE</div>
+          <div class="brand-text">
+            <h1>Ontology Explorer · 知识本体可视化与编辑工作台</h1>
+            <p>类层级 · 对象/数据属性 · 特征公理 · 交互式知识图谱</p>
+          </div>
+        </div>
+        <nav class="app-nav">
+          <a class="nav-pill" href="/">🧩 抽取工作台</a>
+          <a class="nav-pill" href="/history">📚 任务历史与统计</a>
+          <a class="nav-pill is-active" href="/explorer">🌐 Ontology Explorer</a>
+          <a class="nav-pill is-solid" href="/api/export-merged-owl">⬇️ 导出融合知识总库</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="shell" style="max-width: 100%; padding: 12px 24px;">
+      <!-- 顶部数据源选择与语义检索条 -->
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 16px; flex-wrap: wrap;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <label style="font-weight: 600; font-size: 13px;">本体数据源:</label>
+          <select id="sourceSelect" class="form-input" style="width: 280px; padding: 4px 8px; font-size: 13px;" onchange="loadSourceData()">
+            <option value="merged">🌐 全局融合本体知识库 (Merged Ontology)</option>
+            {% for t in tasks %}
+            <option value="{{ t.id }}">任务: {{ t.title[:24] }}... ({{ t.datamodel }})</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- 语义检索关键词输入框 -->
+        <div style="display: flex; align-items: center; gap: 8px; flex: 1; max-width: 480px;">
+          <input type="text" id="globalKeywordInput" class="form-input" style="flex: 1; padding: 5px 12px; font-size: 13px;" placeholder="🔎 输入专业关键词（如：变压器、凝结水、保护、MPa）检索相关图谱..." onkeydown="if(event.key==='Enter') loadSourceData()" />
+          <button class="btn btn-primary btn-sm" onclick="loadSourceData()">🚀 语义图谱检索</button>
+          <button class="btn btn-ghost btn-sm" onclick="clearKeywordSearch()">重置</button>
+        </div>
+
+        <!-- Neo4j 集成控制与状态 -->
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <button id="btnNeoSync" class="btn btn-sm" style="background: #0284c7; color: #ffffff;" onclick="syncToNeo4j()">⚡ 一键同步至 Neo4j</button>
+          <span id="neoStatusBadge" style="font-size: 11px; padding: 3px 8px; border-radius: 12px; background: #f1f5f9; color: #64748b; font-weight: 600;">Neo4j: 检测中...</span>
+        </div>
+
+        <div id="statsRow" style="font-size: 13px; color: #64748b;">
+          载入中...
+        </div>
+      </div>
+
+      <!-- 三栏式 Explorer 布局 -->
+      <div class="explorer-container">
+        <!-- 左栏：层级与实体树 (Entities & Properties Browser) -->
+        <div class="panel-box">
+          <div class="panel-header">
+            <span>本体结构层级 (Hierarchy)</span>
+            <span id="treeStatsBadge" class="tree-badge">0</span>
+          </div>
+          <div class="tab-switch">
+            <button class="tab-switch-btn active" onclick="switchNavTab('classes')">Classes (类)</button>
+            <button class="tab-switch-btn" onclick="switchNavTab('obj_props')">Obj Props (关系)</button>
+            <button class="tab-switch-btn" onclick="switchNavTab('data_props')">Data Props (属性)</button>
+            <button class="tab-switch-btn" onclick="switchNavTab('individuals')">Individuals (个体)</button>
+          </div>
+          <div style="padding: 0 8px;">
+            <input type="text" id="treeSearch" class="search-input" placeholder="🔍 快速搜索概念或属性..." oninput="filterTree()" />
+          </div>
+          <div id="treeContainer" class="tree-nav">
+            <!-- 动态渲染树列表 -->
+          </div>
+        </div>
+
+        <!-- 中栏：网络知识图谱交互视窗 (Interactive Knowledge Graph) -->
+        <div class="panel-box graph-viewport">
+          <div class="graph-toolbar">
+            <button class="btn btn-ghost btn-sm" onclick="resetZoom()">🔍 复位视图</button>
+            <button class="btn btn-ghost btn-sm" onclick="togglePhysics()">⏸️ 暂停/恢复布局</button>
+            <span style="font-size: 12px; color: #64748b; margin-left: 8px;">点击节点高亮属性与连边</span>
+          </div>
+          <div id="networkCanvas"></div>
+        </div>
+
+        <!-- 右栏：概念与属性检查器 / 接口调用数据预览 (Inspector & API JSON Preview) -->
+        <div class="panel-box inspector-panel">
+          <div class="panel-header">
+            <div style="display: flex; gap: 8px;">
+              <button id="btnTabInspect" class="tab-switch-btn active" style="padding: 2px 8px;" onclick="switchRightPanel('inspect')">实体公理面板</button>
+              <button id="btnTabApi" class="tab-switch-btn" style="padding: 2px 8px;" onclick="switchRightPanel('api')">⚡ API 调用数据</button>
+            </div>
+            <span id="inspectorTypeBadge" class="tree-badge">SEARCH_RESULTS</span>
+          </div>
+
+          <div id="inspectorContent" class="inspector-body">
+            <div style="color: #94a3b8; text-align: center; margin-top: 80px;">
+              👈 请在左侧列表中选择概念，或点击中间图谱节点查看详细属性与公理约束。
+            </div>
+          </div>
+
+          <!-- API JSON 格式面板：保证与 GET /api/ontology/search 结构与内容 100% 严格一致 -->
+          <div id="apiJsonContent" class="inspector-body" style="display: none; padding: 12px; background: #0f172a; color: #f8fafc; font-family: monospace; font-size: 11px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border-bottom: 1px solid #334155; padding-bottom: 6px;">
+              <span id="apiJsonEndpointLabel" style="color: #38bdf8; font-weight: 600;">GET /api/ontology/search?query=...</span>
+              <div style="display: flex; gap: 6px;">
+                <button id="btnShowSearchBatch" class="btn btn-ghost btn-sm" style="display: none; color: #38bdf8; border-color: #0284c7; padding: 2px 6px;" onclick="restoreSearchBatchJson()">🔄 查看搜索全量集合</button>
+                <button class="btn btn-ghost btn-sm" style="color: #cbd5e1; border-color: #475569; padding: 2px 6px;" onclick="copyApiJson()">📋 复制 JSON</button>
+              </div>
+            </div>
+            <pre id="apiJsonPre" style="margin: 0; white-space: pre-wrap; word-break: break-all; color: #a5f3fc; max-height: calc(100vh - 220px); overflow-y: auto;">// 请在顶部搜索框输入关键词，或在图谱中点击实体即可生成标准调用知识包</pre>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script>
+      let currentData = null;
+      let activeNavTab = 'classes';
+      let network = null;
+      let physicsEnabled = true;
+
+      // 页面加载默认载入数据并检测 Neo4j 连接状态
+      window.onload = function() {
+        loadSourceData();
+        checkNeo4jStatus();
+      };
+
+      async function checkNeo4jStatus() {
+        const badge = document.getElementById('neoStatusBadge');
+        try {
+          const resp = await fetch('/api/neo4j/status');
+          const data = await resp.json();
+          if (data.connected) {
+            badge.style.background = '#dcfce7';
+            badge.style.color = '#15803d';
+            badge.innerText = `Neo4j: 已连接 (${data.total_nodes} 节点)`;
+          } else {
+            badge.style.background = '#fee2e2';
+            badge.style.color = '#b91c1c';
+            badge.innerText = 'Neo4j: 未连接';
+            badge.title = data.error || '无法连接到 Neo4j 实例';
+          }
+        } catch (e) {
+          badge.style.background = '#f1f5f9';
+          badge.style.color = '#64748b';
+          badge.innerText = 'Neo4j: 检测离线';
+        }
+      }
+
+      async function syncToNeo4j() {
+        const sourceVal = document.getElementById('sourceSelect').value;
+        const btn = document.getElementById('btnNeoSync');
+        const origText = btn.innerText;
+        btn.disabled = true;
+        btn.innerText = '⏳ 正在同步入图...';
+
+        try {
+          const resp = await fetch('/api/neo4j/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source: sourceVal })
+          });
+          const res = await resp.json();
+          if (res.success) {
+            alert(`🎉 成功同步到 Neo4j 图数据库！\n• 写入/更新节点: ${res.synced_nodes} 个\n• 建立关系连边: ${res.synced_relationships} 条\n• 处理实体总数: ${res.total_entities_processed} 个`);
+            checkNeo4jStatus();
+          } else {
+            alert('同步失败: ' + (res.error || res.message || '未知错误'));
+          }
+        } catch (e) {
+          alert('网络或服务请求异常: ' + e.message);
+        } finally {
+          btn.disabled = false;
+          btn.innerText = origText;
+        }
+      }
+
+      async function loadSourceData() {
+        const sourceVal = document.getElementById('sourceSelect').value;
+        const kw = (document.getElementById('globalKeywordInput').value || '').trim();
+        document.getElementById('statsRow').innerText = "⏳ 正在检索并构建知识拓扑图谱...";
+        try {
+          const url = `/api/explorer/data?source=${encodeURIComponent(sourceVal)}&keyword=${encodeURIComponent(kw)}`;
+          const resp = await fetch(url);
+          currentData = await resp.json();
+          if (!currentData.success) {
+            alert("读取本体模型失败: " + (currentData.error || "未知原因"));
+            return;
+          }
+          // 更新统计
+          const s = currentData.stats;
+          const nodeCount = (currentData.graph && currentData.graph.nodes) ? currentData.graph.nodes.length : 0;
+          const linkCount = (currentData.graph && currentData.graph.links) ? currentData.graph.links.length : 0;
+          const filterHint = kw ? ` <span style="color:#2563eb; font-weight:600;">(命中关键词: "${kw}"，展示 ${nodeCount} 个关联实体节点 / ${linkCount} 条关系连边)</span>` : "";
+
+          document.getElementById('statsRow').innerHTML = `
+            <strong>${s.classes_count}</strong> 类 · 
+            <strong>${s.object_properties_count}</strong> 关系 · 
+            <strong>${s.data_properties_count}</strong> 属性 · 
+            <strong>${s.individuals_count}</strong> 个体${filterHint}
+          `;
+          renderNavTree();
+          renderGraph();
+
+          // 如果用户执行了搜索，API 默认将全量命中的结果集合展示在右侧 API 面板中
+          if (kw) {
+            updateApiPanelWithSearchResults(kw, sourceVal);
+          }
+        } catch (e) {
+          document.getElementById('statsRow').innerText = "加载失败: " + e.message;
+        }
+      }
+
+      function clearKeywordSearch() {
+        document.getElementById('globalKeywordInput').value = '';
+        loadSourceData();
+      }
+
+      function switchNavTab(tabName) {
+        activeNavTab = tabName;
+        document.querySelectorAll('.tab-switch-btn').forEach(btn => btn.classList.remove('active'));
+        event.target.classList.add('active');
+        document.getElementById('treeSearch').value = '';
+        renderNavTree();
+      }
+
+      function renderNavTree() {
+        if (!currentData) return;
+        const container = document.getElementById('treeContainer');
+        container.innerHTML = '';
+        const kw = (document.getElementById('treeSearch').value || '').trim().toLowerCase();
+
+        let items = [];
+        if (activeNavTab === 'classes') items = currentData.classes;
+        else if (activeNavTab === 'obj_props') items = currentData.object_properties;
+        else if (activeNavTab === 'data_props') items = currentData.data_properties;
+        else if (activeNavTab === 'individuals') items = currentData.individuals;
+
+        document.getElementById('treeStatsBadge').innerText = items.length;
+
+        const filtered = items.filter(it => {
+          const text = (it.label + " " + it.name + " " + (it.comment || '')).toLowerCase();
+          return text.includes(kw);
+        });
+
+        filtered.forEach(it => {
+          const div = document.createElement('div');
+          div.className = 'tree-item';
+          div.onclick = () => selectItem(it, activeNavTab);
+
+          let badgeHtml = '';
+          if (activeNavTab === 'classes') {
+            badgeHtml = `<span class="tree-badge">${it.instances_count || 0}</span>`;
+          } else if (activeNavTab === 'obj_props' && it.characteristics && it.characteristics.length) {
+            badgeHtml = `<span class="char-tag">${it.characteristics[0]}</span>`;
+          } else if (activeNavTab === 'individuals') {
+            badgeHtml = `<span class="tree-badge">${(it.types[0] || '').split('/').pop()}</span>`;
+          }
+
+          div.innerHTML = `
+            <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+              ${it.label || it.name}
+            </span>
+            ${badgeHtml}
+          `;
+          container.appendChild(div);
+        });
+      }
+
+      function filterTree() {
+        renderNavTree();
+      }
+
+      function selectItem(item, type) {
+        document.querySelectorAll('.tree-item').forEach(el => el.classList.remove('is-selected'));
+        if (event && event.currentTarget) {
+          event.currentTarget.classList.add('is-selected');
+        }
+
+        const badge = document.getElementById('inspectorTypeBadge');
+        badge.innerText = type.toUpperCase();
+
+        const box = document.getElementById('inspectorContent');
+        let html = '';
+
+        html += `
+          <div class="prop-row">
+            <div class="prop-name">标识名称 (Label / Name)</div>
+            <div class="prop-val" style="font-weight: 700; font-size: 15px; color: #3b82f6;">${item.label || item.name}</div>
+          </div>
+          <div class="prop-row">
+            <div class="prop-name">全局 IRI</div>
+            <div class="prop-val" style="font-size: 11px; color: #64748b; font-family: monospace;">${item.uri}</div>
+          </div>
+        `;
+
+        if (item.comment) {
+          html += `
+            <div class="prop-row">
+              <div class="prop-name">语义定义说明 (Description)</div>
+              <div class="prop-val">${item.comment}</div>
+            </div>
+          `;
+        }
+
+        if (type === 'classes') {
+          html += `
+            <div class="prop-row">
+              <div class="prop-name">父类 (SuperClasses)</div>
+              <div class="prop-val">${(item.parents && item.parents.length) ? item.parents.map(p => p.split('/').pop()).join(', ') : 'owl:Thing (顶层概念)'}</div>
+            </div>
+            <div class="prop-row">
+              <div class="prop-name">已挂载具名个体数</div>
+              <div class="prop-val" style="font-weight: 600;">${item.instances_count || 0} 个</div>
+            </div>
+          `;
+        } else if (type === 'obj_props') {
+          html += `
+            <div class="prop-row">
+              <div class="prop-name">对象属性公理特征 (Characteristics)</div>
+              <div class="prop-val">
+                ${(item.characteristics && item.characteristics.length) ? item.characteristics.map(c => `<span class="char-tag">⚡ ${c}</span>`).join('') : '<span style="color:#94a3b8;">无特殊逻辑约束</span>'}
+              </div>
+            </div>
+            <div class="prop-row">
+              <div class="prop-name">值域 (Range)</div>
+              <div class="prop-val">${(item.range && item.range.length) ? item.range.map(r => r.split('/').pop()).join(', ') : 'Any'}</div>
+            </div>
+          `;
+        } else if (type === 'data_props') {
+          html += `
+            <div class="prop-row">
+              <div class="prop-name">数据类型特征 (Characteristics)</div>
+              <div class="prop-val">
+                ${(item.characteristics && item.characteristics.length) ? item.characteristics.map(c => `<span class="char-tag">⚡ ${c}</span>`).join('') : '标准数据属性'}
+              </div>
+            </div>
+          `;
+        } else if (type === 'individuals') {
+          html += `
+            <div class="prop-row">
+              <div class="prop-name">所属本体类 (Types)</div>
+              <div class="prop-val">${item.types.map(t => `<span class="tree-badge" style="margin-right:4px;">${t.split('/').pop()}</span>`).join('')}</div>
+            </div>
+          `;
+
+          if (item.data_properties && Object.keys(item.data_properties).length) {
+            html += `<div class="tree-group-title" style="padding-left:0; margin-top:12px;">数据属性断言 (Data Properties)</div>`;
+            for (const [k, vals] of Object.entries(item.data_properties)) {
+              html += `
+                <div class="prop-row">
+                  <div class="prop-name">${k}</div>
+                  <div class="prop-val">${vals.join('; ')}</div>
+                </div>
+              `;
+            }
+          }
+
+          if (item.object_properties && Object.keys(item.object_properties).length) {
+            html += `<div class="tree-group-title" style="padding-left:0; margin-top:12px;">语义关系断言 (Object Properties)</div>`;
+            for (const [rel, targets] of Object.entries(item.object_properties)) {
+              html += `
+                <div class="prop-row">
+                  <div class="prop-name">${rel}</div>
+                  <div class="prop-val">
+                    ${targets.map(t => `<span style="color:#2563eb; font-weight:500;">➡️ ${t.label || t.name}</span>`).join('<br/>')}
+                  </div>
+                </div>
+              `;
+            }
+          }
+        }
+
+        box.innerHTML = html;
+
+        // 同步更新 API JSON 格式面板，展示所选实体的精准详细结构
+        const apiPayload = {
+          entity: {
+            iri: item.uri,
+            name: item.name,
+            label: item.label || item.name,
+            class_type: (item.types && item.types.length) ? item.types[0].split('/').pop() : (type === 'classes' ? 'owl:Class' : 'owl:Thing'),
+            class_hierarchy: (item.parents && item.parents.length) ? item.parents.map(p => p.split('/').pop()) : ['owl:Thing']
+          },
+          attributes: item.data_properties || {},
+          relationships: item.object_properties || {},
+          characteristics: item.characteristics || (type === 'classes' ? ['ClassAxiom'] : ['Functional']),
+          timestamp: new Date().toISOString()
+        };
+        document.getElementById('apiJsonPre').innerText = JSON.stringify(apiPayload, null, 2);
+        document.getElementById('apiJsonEndpointLabel').innerText = `GET /api/ontology/search (单个节点: ${item.label || item.name})`;
+        document.getElementById('btnShowSearchBatch').style.display = lastSearchBatchJson ? 'inline-block' : 'none';
+
+        // 如果图谱中有对应节点，自动聚焦定位
+        if (network && item.uri) {
+          try {
+            network.focus(item.uri, {
+              scale: 1.2,
+              animation: { duration: 500, easingFunction: 'easeInOutQuad' }
+            });
+            network.selectNodes([item.uri]);
+          } catch (e) {}
+        }
+      }
+
+      function renderGraph() {
+        if (!currentData || !currentData.graph) return;
+        const container = document.getElementById('networkCanvas');
+        const nodes = new vis.DataSet(currentData.graph.nodes.map(n => ({
+          id: n.id,
+          label: n.name,
+          title: `${n.type}: ${n.name}`,
+          color: {
+            background: n.color,
+            border: '#1e293b',
+            highlight: { background: '#f59e0b', border: '#b45309' }
+          },
+          font: { color: '#0f172a', size: 12, strokeWidth: 2, strokeColor: '#ffffff' },
+          shape: n.group === 'Class' ? 'hexagon' : 'dot',
+          size: n.val || 12,
+        })));
+
+        const edges = new vis.DataSet(currentData.graph.links.map(l => ({
+          from: l.source,
+          to: l.target,
+          label: l.label,
+          color: { color: l.color || '#94a3b8', highlight: '#f59e0b' },
+          font: { size: 10, align: 'middle', strokeWidth: 2, strokeColor: '#ffffff' },
+          arrows: 'to',
+          smooth: { type: 'continuous' }
+        })));
+
+        const data = { nodes: nodes, edges: edges };
+        const options = {
+          physics: {
+            stabilization: false,
+            barnesHut: {
+              gravitationalConstant: -2500,
+              springConstant: 0.04,
+              springLength: 120
+            }
+          },
+          interaction: {
+            hover: true,
+            tooltipDelay: 200,
+            navigationButtons: true,
+            keyboard: true
+          }
+        };
+
+        network = new vis.Network(container, data, options);
+
+        network.on("click", function(params) {
+          if (params.nodes.length > 0) {
+            const nodeId = params.nodes[0];
+            // 查找对应的实体或概念
+            let target = currentData.classes.find(c => c.uri === nodeId);
+            let type = 'classes';
+            if (!target) {
+              target = currentData.individuals.find(ind => ind.uri === nodeId);
+              type = 'individuals';
+            }
+            if (target) {
+              selectItem(target, type);
+            }
+          }
+        });
+      }
+
+      let lastSearchBatchJson = null;
+
+      async function updateApiPanelWithSearchResults(kw, sourceVal) {
+        try {
+          const endpointUrl = `/api/ontology/search?query=${encodeURIComponent(kw)}&source=${encodeURIComponent(sourceVal)}&limit=30`;
+          document.getElementById('apiJsonEndpointLabel').innerText = `GET ${endpointUrl}`;
+          const resp = await fetch(endpointUrl);
+          const json = await resp.json();
+          lastSearchBatchJson = json;
+          document.getElementById('apiJsonPre').innerText = JSON.stringify(json, null, 2);
+          document.getElementById('btnShowSearchBatch').style.display = 'none';
+        } catch (e) {
+          console.error("更新 API 数据面板失败:", e);
+        }
+      }
+
+      function restoreSearchBatchJson() {
+        if (lastSearchBatchJson) {
+          document.getElementById('apiJsonPre').innerText = JSON.stringify(lastSearchBatchJson, null, 2);
+          const kw = (document.getElementById('globalKeywordInput').value || '').trim();
+          const sourceVal = document.getElementById('sourceSelect').value;
+          document.getElementById('apiJsonEndpointLabel').innerText = `GET /api/ontology/search?query=${encodeURIComponent(kw)}&source=${encodeURIComponent(sourceVal)}`;
+          document.getElementById('btnShowSearchBatch').style.display = 'none';
+        }
+      }
+
+      function switchRightPanel(tab) {
+        if (tab === 'inspect') {
+          document.getElementById('btnTabInspect').classList.add('active');
+          document.getElementById('btnTabApi').classList.remove('active');
+          document.getElementById('inspectorContent').style.display = 'block';
+          document.getElementById('apiJsonContent').style.display = 'none';
+        } else {
+          document.getElementById('btnTabInspect').classList.remove('active');
+          document.getElementById('btnTabApi').classList.add('active');
+          document.getElementById('inspectorContent').style.display = 'none';
+          document.getElementById('apiJsonContent').style.display = 'block';
+        }
+      }
+
+      function copyApiJson() {
+        const text = document.getElementById('apiJsonPre').innerText;
+        navigator.clipboard.writeText(text).then(() => {
+          alert("已复制标准 API 响应 JSON 数据！可直接用于接口对接。");
+        });
+      }
+
+      function resetZoom() {
+        if (network) {
+          network.fit({ animation: { duration: 600, easingFunction: 'easeInOutQuad' } });
+        }
+      }
+
+      function togglePhysics() {
+        if (network) {
+          physicsEnabled = !physicsEnabled;
+          network.setOptions({ physics: { enabled: physicsEnabled } });
+        }
+      }
+    </script>
+  </body>
+</html>

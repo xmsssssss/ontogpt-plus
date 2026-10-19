@@ -267,6 +267,15 @@ class KnowledgeEngine(ABC):
     ontology with linkml-term-validator and invalid identifiers are repaired or rewritten.
     The outcome is recorded in the result's validation report."""
 
+    stop_requested: bool = False
+    """Flag to immediately cancel ongoing extraction."""
+
+    progress_callback: Optional[Any] = None
+    """Optional callback hook to report live progress: callback(current_step, total_steps, message)."""
+
+    max_workers: int = 5
+    """Number of parallel concurrent worker threads for processing document chunks."""
+
     term_validation_adapters: Dict[str, Any] = field(default_factory=dict)
     """Optional prefix to OAK selector (or adapter) overrides for term validation."""
 
@@ -306,11 +315,13 @@ class KnowledgeEngine(ABC):
             self.client = LLMClient(
                 model=self.model,
                 temperature=self.temperature,
+                api_key=self.api_key,
                 api_version=self.api_version,
                 api_base=self.api_base,
                 custom_llm_provider=self.model_provider,
                 system_message=self.system_message,
             )
+            self.client.parent_engine = self
 
         # We retrieve encoding
         # but tiktoken won't work for non-openai models

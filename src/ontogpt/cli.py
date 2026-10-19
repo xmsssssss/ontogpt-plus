@@ -1806,7 +1806,7 @@ def categorize_mappings(
         msdf = to_mapping_set_dataframe(msd)
         sssom_writers.write_table(msdf, output)
         if yaml_output:
-            with open(yaml_output, "w") as file:
+            with open(yaml_output, "w", encoding="utf-8") as file:
                 dump_minimal_yaml(cms, file=file)
 
 

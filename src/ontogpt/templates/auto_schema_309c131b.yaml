@@ -1,0 +1,215 @@
+id: https://w3id.org/ontogpt/auto_schema_309c131b
+name: auto_schema_309c131b
+title: Gas Turbine Technical Specifications and Components
+description: 本模式用于从电力行业（特别是燃机领域）的技术文档中提取结构化信息。 This schema is designed to extract
+  structured information from technical documentation in the power industry, specifically
+  focusing on gas turbine specifications, components, processes, and operational parameters.
+default_prefix: auto_schema_309c131b
+default_range: string
+prefixes:
+  linkml: https://w3id.org/linkml/
+  core: https://w3id.org/ontogpt/core/
+  auto_schema_309c131b: https://w3id.org/ontogpt/auto_schema_309c131b/
+imports:
+- linkml:types
+- core
+classes:
+  AutoSchema309c131bReport:
+    tree_root: true
+    description: 根类，代表一份完整的燃机技术报告或规格说明书。 Root class representing a complete gas turbine
+      technical report or specification sheet.
+    attributes:
+      id:
+        identifier: true
+        range: string
+        description: Unique auto identifier
+      equipment_components:
+        multivalued: true
+        range: EquipmentComponent
+        description: 提取文本中提到的所有硬件设备、部件或子系统。 Extract all hardware devices, parts, or
+          subsystems mentioned in the text.
+      technical_processes:
+        multivalued: true
+        range: TechnicalProcess
+        description: 提取涉及的操作过程、燃烧方式、冷却机制或控制逻辑。 Extract operational processes, combustion
+          methods, cooling mechanisms, or control logic described.
+      performance_parameters:
+        multivalued: true
+        range: PerformanceParameter
+        description: 提取具体的数值指标、等级数量、流量分配或技术参数。 Extract specific numerical metrics,
+          stage counts, flow allocations, or technical specifications.
+      material_properties:
+        multivalued: true
+        range: MaterialProperty
+        description: 提取关于材料涂层、耐腐蚀性、机械性能或叶片材质的描述。 Extract descriptions regarding material
+          coatings, corrosion resistance, mechanical properties, or blade materials.
+      operational_modes:
+        multivalued: true
+        range: OperationalMode
+        description: 提取机组的运行状态、启动条件、旋转方向或工况要求。 Extract operational states, start-up
+          conditions, rotation directions, or operating requirements.
+      system_configurations:
+        multivalued: true
+        range: SystemConfiguration
+        description: 提取机组的整体配置、型号及联合循环结构等系统级参数。 Extract overall unit configuration,
+          model numbers, and combined cycle structures.
+      auxiliary_systems:
+        multivalued: true
+        range: AuxiliarySystem
+        description: 提取润滑油、密封油、冷却水等辅助系统的组件、逻辑及特性。 Extract components, logic, and characteristics
+          of auxiliary systems like lubrication, sealing, cooling water, etc.
+      electrical_control_specs:
+        multivalued: true
+        range: ElectricalControlSpec
+        description: 提取励磁、AVR、SFC及电气保护相关的技术参数与逻辑。 Extract technical parameters and
+          logic related to excitation, AVR, SFC, and electrical protection.
+      safety_and_operation_procedures:
+        multivalued: true
+        range: SafetyOperationProcedure
+        description: 提取安全规程、试验标准、监护要求及异常处理流程。 Extract safety regulations, test standards,
+          supervision requirements, and abnormal handling procedures.
+      chemical_water_quality:
+        multivalued: true
+        range: ChemicalWaterQuality
+        description: 提取汽水品质、氢气纯度、露点及化学取样标准。 Extract steam/water quality, hydrogen
+          purity, dew point, and chemical sampling standards.
+      maintenance_storage_procedures:
+        multivalued: true
+        range: MaintenanceStorageProcedure
+        description: 提取停机保养分类、防锈蚀范围及充氮/烘干原理。 Extract shutdown maintenance categories,
+          anti-corrosion scope, and nitrogen/drying principles.
+      bearing_support_configurations:
+        multivalued: true
+        range: BearingSupportConfiguration
+        description: 提取轴承型式、支承方式、推力轴承数量、可倾瓦轴承分布及轴承编号等转子支承与轴承配置信息。 Extract rotor bearing
+          and support configurations including bearing types, support methods, thrust
+          bearing counts, tilting pad bearing distribution, and bearing numbering.
+      anchoring_and_clearance_arrangements:
+        multivalued: true
+        range: AnchoringArrangement
+        description: 提取缸体猫爪支承、锚定块布置及纵向/横向定位等安装定位与锚固信息。 Extract installation positioning
+          and anchoring information such as cylinder cat-claw supports, anchor block
+          placement, and longitudinal/lateral fixed points.
+      auto_discovered_features:
+        multivalued: true
+        range: KeyValuePair
+        description: 动态未归类特征键值对
+  EquipmentComponent:
+    is_a: CompoundExpression
+    description: 表示燃机的具体物理组成部分，如压气机、燃烧室、透平、管线等。 Represents specific physical components
+      of the gas turbine, such as compressors, combustors, turbines, pipelines, etc.
+    attributes:
+      name:
+        range: string
+        description: 部件名称 (e.g., "轴流式压气机", "过渡段")
+      component_type:
+        range: string
+        description: 部件类型分类 (e.g., "Core Component", "Fuel System", "Control Unit")
+      quantity_or_stages:
+        range: string
+        description: 数量或级数 (e.g., "17 级", "20 只")
+      arrangement:
+        range: string
+        description: 布置方式 (e.g., "环形布置", "沿轴线", "膨胀节连接HRSG") Arrangement method including
+          structural connections like expansion joints.
+      key_feature:
+        range: string
+        description: 关键特性 (e.g., "带有进口可调导叶(IGV)", "反动式叶片", "管壳式加热器") Key features
+          including specific design types like heat exchanger styles.
+      function_description:
+        range: string
+        description: 功能简述
+      cooling_source:
+        range: string
+        description: 冷却来源 (e.g., "压气机部分排气", "强迫油循环风冷") Source of cooling medium or
+          method for the component.
+      valve_mechanism:
+        range: string
+        description: 阀门触发或控制机制 (e.g., "电磁阀控制空气", "全弹簧机构避免渗漏") Trigger mechanism or
+          actuation method for valves within this component.
+      equipment_tag_number:
+        range: string
+        description: 设备编号或位号 (e.g., "MBP02AA712", "MBP02AA711") Equipment tag identifiers
+          used for uniquely identifying control valves and other components in technical
+          documents.
+      valve_flow_type:
+        range: string
+        description: 阀门流量类型 (e.g., "低流量控制阀", "大流量控制阀") Flow characteristics classification
+          for control valves, such as low-flow or high-flow control valves.
+  TechnicalProcess:
+    is_a: CompoundExpression
+    description: 表示技术操作、燃烧工艺、控制策略或流体动力学过程。 Represents technical operations, combustion
+      processes, control strategies, or fluid dynamic processes.
+    attributes:
+      process_name:
+        range: string
+        description: 过程名称 (e.g., "干式低NOX燃烧技术", "火焰稳定性维持")
+      mechanism:
+        range: string
+        description: 作用机理 (e.g., "旁路阀将一部分压气机排气排入...", "叶轮流速正比于燃气流速") Mechanism of
+          action, potentially including sensor principles if applicable to the process
+          context.
+      purpose:
+        range: string
+        description: 目的或效果 (e.g., "提高机组启动时的火焰稳定性", "改进耐腐蚀能力")
+      control_method:
+        range: string
+        description: 控制方法 (e.g., "由安装在燃料单元中的控制阀控制", "高压油控制IGV") Control method, specifying
+          media like hydraulic oil if relevant.
+  BearingSupportConfiguration:
+    is_a: CompoundExpression
+    description: 表示燃机发电机组的轴承与转子支承配置实体，包括轴承型式（如可倾瓦轴承）、支承轴承数量、推力轴承数量、 轴承编号分布、猫爪支承及其他支承结构信息。
+      Represents bearing and rotor support configuration entities of gas turbine generator
+      units, including bearing types such as tilting pad bearings, support bearing
+      counts, thrust bearing counts, bearing numbering, cat-claw supports, and other
+      support structures.
+    attributes:
+      configuration_name:
+        range: string
+        description: 配置名称或适用部件 (e.g., "高中压转子支承", "可倾瓦轴承配置")
+      support_bearing_count:
+        range: string
+        description: 支承轴承数量或配置 (e.g., "每根转子设两个支承轴承")
+      thrust_bearing_count:
+        range: string
+        description: 推力轴承数量 (e.g., "机组设计两个推力轴承")
+      bearing_type:
+        range: string
+        description: 轴承型式 (e.g., "可倾瓦轴承", "径向轴承")
+      bearing_numbering:
+        range: string
+        description: 轴承编号及对应分布 (e.g., "高中压转子3号和4号轴承、SSS离合器和低压转子5～7号轴承均为可倾瓦轴承")
+      cylinder_support_method:
+        range: string
+        description: 缸体支承方式 (e.g., "四个猫爪支承")
+  AnchoringArrangement:
+    is_a: CompoundExpression
+    description: 表示机组缸体、汽轮机及管道等的锚固与定位布置信息，包括锚定块数量与位置、纵向/横向中心线固定点、 平衡管布置、大气阀数量及其他安装定位结构。
+      Represents anchoring and positioning arrangement information for unit cylinders,
+      turbines, and piping, including anchor block counts and positions, longitudinal/lateral
+      centerline fixed points, balance pipe arrangements, atmospheric valve counts,
+      and other installation positioning structures.
+    attributes:
+      arrangement_name:
+        range: string
+        description: 布置名称或适用部件 (e.g., "低压汽机锚定块布置", "平衡管布置")
+      anchor_block_count:
+        range: string
+        description: 锚定块数量及位置 (e.g., "低压汽机高压端1个、低压端1个")
+      balance_pipe_count:
+        range: string
+        description: 平衡管数量及配置 (e.g., "高中压缸3根，低压汽机为双流式故不需平衡管")
+      atmospheric_valve_count:
+        range: string
+        description: 大气阀数量 (e.g., "低压缸2个")
+      centerline_fixation:
+        range: string
+        description: 中心线方向固定点布置 (e.g., "纵向中心线附近一边一个")
+  KeyValuePair:
+    is_a: CompoundExpression
+    description: 自适应发现的专有属性键值对
+    attributes:
+      key:
+        description: 属性或参量名称
+      value:
+        description: 属性取值及单位

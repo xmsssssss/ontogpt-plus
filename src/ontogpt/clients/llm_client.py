@@ -3,6 +3,7 @@
 import logging
 import os
 import sys
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -83,6 +84,8 @@ class LLMClient:
                 api_key=self.api_key or None,
             )
         except litellm.exceptions.BadRequestError:
+            if self.api_base and not self.custom_llm_provider:
+                self.custom_llm_provider = "openai"
             return
 
         self.model = resolved_model
@@ -106,6 +109,8 @@ class LLMClient:
         return self.model
 
     def _apply_oaklib_credentials(self) -> None:
+        if self.api_key and self.api_base:
+            return
         validation = litellm.validate_environment(
             model=self._provider_qualified_model(),
             api_key=self.api_key or None,
@@ -201,6 +206,9 @@ class LLMClient:
         litellm.cache = Cache(type=LiteLLMCacheType.DISK, disk_cache_dir=cache_dir)
 
     def complete(self, prompt, show_prompt: bool = False, **kwargs) -> str:
+        parent_eng = getattr(self, "parent_engine", None)
+        if parent_eng and getattr(parent_eng, "stop_requested", False):
+            raise InterruptedError("用户已手动停止任务")
 
         logger.info(f"Complete: engine={self.model}, prompt[{len(prompt)}]={prompt[0:100]}...")
         if show_prompt:
@@ -217,6 +225,9 @@ class LLMClient:
         # Some errors may be temporary, while others, such as authentication errors,
         # require action before we may continue.
         force_stop = False
+        last_error_detail = None
+
+        default_timeout = int(os.environ.get("ONTOGPT_API_TIMEOUT", 180))
 
         # TODO: expose user prompt to CLI
         request_kwargs = {
@@ -225,13 +236,22 @@ class LLMClient:
             "model": self.model,
             "messages": these_messages,
             "temperature": self.temperature,
-            "caching": True,
+            "caching": getattr(self, "enable_cache", True),
+            "timeout": default_timeout,
             "custom_llm_provider": self.custom_llm_provider,
         }
         if self.api_key:
             request_kwargs["api_key"] = self.api_key
 
+        # 允许调用方补充或覆盖请求参数（例如为长输出任务显式指定 max_tokens）
+        request_kwargs.update(kwargs)
+
+        retry_count = 0
+        max_retries = 3
+
         while True:
+            if parent_eng and getattr(parent_eng, "stop_requested", False):
+                raise InterruptedError("用户已手动停止任务")
             try:
                 response = completion(**request_kwargs)
             except litellm.exceptions.UnsupportedParamsError as e:
@@ -246,49 +266,91 @@ class LLMClient:
                     request_kwargs["drop_params"] = True
                     continue
                 logger.error(f"Encountered error due to unsupported parameters: {e}")
+                last_error_detail = f"模型不支持请求参数 (UnsupportedParamsError): {e}"
                 force_stop = True
             except litellm.exceptions.Timeout as e:
-                logger.error(f"Encountered API timeout error: {e}")
+                retry_count += 1
+                if retry_count <= max_retries:
+                    wait_sec = retry_count * 3
+                    logger.warning(
+                        f"API 请求超时 ({default_timeout}秒)，正在进行第 {retry_count}/{max_retries} 次自动重试 (等待 {wait_sec} 秒)..."
+                    )
+                    time.sleep(wait_sec)
+                    continue
+                logger.error(f"Encountered API timeout error after {max_retries} retries: {e}")
+                last_error_detail = (
+                    f"请求超时 (TimeoutError，单次上限 {default_timeout} 秒，重试 {max_retries} 次仍未响应): "
+                    "由于长文档分块提取任务生成内容较多，建议在界面将「并行并发度」调小（如 4 或 1 线程）或适当减小分块窗口。"
+                )
             except litellm.exceptions.AuthenticationError as e:
                 logger.error(f"Encountered authentication error: {e}")
+                last_error_detail = f"接口认证失败 (AuthenticationError): 请检查 API Key 配置 ({e})"
                 force_stop = True
             except litellm.exceptions.NotFoundError as e:
                 logger.error(f"Encountered error due to unrecognized model or endpoint: {e}")
+                last_error_detail = f"模型或端点未找到 (NotFoundError): 请核对模型名称与 API Base 地址 ({e})"
                 force_stop = True
             except litellm.exceptions.ContextWindowExceededError as e:
                 logger.error(f"Exceeded context window: {e}")
+                last_error_detail = f"超出上下文窗口限制 (ContextWindowExceededError): {e}"
             except litellm.exceptions.BadRequestError as e:
                 logger.error(f"Encountered error due to bad request: {e}")
+                last_error_detail = f"请求参数非法 (BadRequestError): {e}"
                 force_stop = True
             except litellm.exceptions.UnprocessableEntityError as e:
                 logger.error(f"Encountered error due to unprocessable entity: {e}")
+                last_error_detail = f"无法处理的请求实体 (UnprocessableEntityError): {e}"
             except litellm.exceptions.PermissionDeniedError as e:
                 logger.error(f"Encountered error - permission denied: {e}")
+                last_error_detail = f"权限被拒绝 (PermissionDeniedError): {e}"
                 force_stop = True
             except litellm.exceptions.RateLimitError as e:
-                logger.error(f"Encountered rate limiting: {e}")
+                retry_count += 1
+                if retry_count <= max_retries:
+                    wait_sec = retry_count * 5
+                    logger.warning(
+                        f"接口速率超限 (RateLimit)，正在进行第 {retry_count}/{max_retries} 次退避重试 (等待 {wait_sec} 秒)..."
+                    )
+                    time.sleep(wait_sec)
+                    continue
+                logger.error(f"Encountered rate limiting after retries: {e}")
+                last_error_detail = f"请求速率超限 (RateLimitError，已重试 {max_retries} 次): {e}"
             except litellm.exceptions.ServiceUnavailableError as e:
                 logger.error(f"Service unavailable: {e}")
+                last_error_detail = f"模型服务不可用 (ServiceUnavailableError): {e}"
                 force_stop = True
             except litellm.exceptions.InternalServerError as e:
                 logger.error(f"Internal server error: {e}")
+                last_error_detail = f"模型服务内部异常 (InternalServerError): {e}"
                 force_stop = True
             except litellm.exceptions.APIError as e:
                 logger.error(f"API returned an invalid response: {e}")
+                last_error_detail = f"API 返回异常响应 (APIError): {e}"
             except litellm.exceptions.APIConnectionError as e:
-                logger.error(f"API connection error: {e}")
+                retry_count += 1
+                if retry_count <= max_retries:
+                    wait_sec = retry_count * 2
+                    logger.warning(
+                        f"网络连接中断，正在进行第 {retry_count}/{max_retries} 次重连重试..."
+                    )
+                    time.sleep(wait_sec)
+                    continue
+                logger.error(f"API connection error after retries: {e}")
+                last_error_detail = f"无法连接到模型服务器 (APIConnectionError): 请检查网络或 API Base ({e})"
             except Exception as e:
                 logger.error(f"Encountered error: {type(e)}, Error: {e}")
+                last_error_detail = f"接口调用未知异常 ({type(e).__name__}): {e}"
             break
 
         if force_stop:
-            sys.exit("Exiting...")
+            msg = last_error_detail or "大模型接口异常中断 (force_stop)"
+            raise RuntimeError(msg)
 
         if response is not None:
             payload = self._extract_response_text(response)
         else:
-            logger.error("No response or response is empty.")
-            payload = ""
+            msg = last_error_detail or "大模型未返回任何响应内容 (Empty response)"
+            raise RuntimeError(msg)
 
         return payload
 
